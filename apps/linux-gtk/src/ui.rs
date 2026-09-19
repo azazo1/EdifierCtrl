@@ -215,7 +215,7 @@ fn group_page(state: Arc<AppState>) -> Box {
     log.set_wrap(true);
     log.set_xalign(0.0);
     let pass = Entry::new();
-    pass.set_placeholder_text(Some("组口令"));
+    pass.set_placeholder_text(Some("组名"));
     let mac = Entry::new();
     mac.set_placeholder_text(Some("耳机 MAC"));
     let list = ListBox::new();

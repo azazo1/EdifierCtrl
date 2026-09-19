@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 
-/// 组口令随数据目录隔离, 只允许当前用户读取, 不访问钥匙串.
+/// 组名保存在对应的数据目录, 文件仅允许当前用户读写.
 enum GroupSecret {
     static func load(from directory: URL = AppPaths.dataDirectory) throws -> String? {
         let data: Data
@@ -38,7 +38,7 @@ enum GroupSecret {
             }
         }
         guard status == 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
-        AppLog.info("组口令已保存至当前数据目录.", category: "group-secret")
+        AppLog.info("组名已保存至当前数据目录.", category: "group-secret")
     }
 
     static func delete(in directory: URL = AppPaths.dataDirectory) throws {
@@ -47,7 +47,7 @@ enum GroupSecret {
         } catch CocoaError.fileNoSuchFile {
             return
         }
-        AppLog.info("已删除当前数据目录中的组口令.", category: "group-secret")
+        AppLog.info("已删除当前数据目录中的组名.", category: "group-secret")
     }
 
     static func file(in directory: URL) -> URL {

@@ -18,7 +18,7 @@ struct HandoffView: View {
                 }
                 if model.peers.isEmpty {
                     Surface {
-                        EmptyState(symbol: "laptopcomputer.and.iphone", title: "等待你的其他设备", detail: "在 Android, Windows 或 Linux 客户端加入相同口令的组. 确保设备处于同一局域网, 并允许应用访问本地网络.")
+                        EmptyState(symbol: "laptopcomputer.and.iphone", title: "等待你的其他设备", detail: "在 Android, Windows 或 Linux 客户端使用相同组名加入交接组. 确保设备处于同一局域网, 并允许应用访问本地网络.")
                     }
                 } else {
                     ForEach(model.peers) { peer in peerRow(peer) }
@@ -39,7 +39,7 @@ struct HandoffView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     SectionHeading(title: "交接前, 准备这三件事")
                     helpRow("1", title: "分别完成配对", detail: "让耳机先与需要使用的手机和电脑分别配对一次.")
-                    helpRow("2", title: "使用同一局域网", detail: "各端打开 EdifierCtrl, 输入完全相同的组口令.")
+                    helpRow("2", title: "使用同一局域网", detail: "各端打开 EdifierCtrl, 输入完全相同的组名.")
                     helpRow("3", title: "在目标设备接管", detail: "原设备释放音频后, 目标设备尝试连接耳机. 蓝牙与系统权限会影响接管结果.")
                 }
             }
@@ -70,15 +70,15 @@ struct HandoffView: View {
                     }
                 } else {
                     HStack(spacing: 12) {
-                        SecureField("输入与其他设备相同的组口令", text: $model.groupSecret)
+                        TextField("输入与其他设备相同的组名", text: $model.groupSecret)
                             .textFieldStyle(.roundedBorder).onSubmit { model.joinGroup() }
                         Button("加入交接组") { model.joinGroup() }.buttonStyle(ActionStyle(prominent: true))
                             .disabled(!model.ready || model.busy || model.groupSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                     HStack {
-                        Toggle("在数据目录中记住口令", isOn: $model.rememberGroup).toggleStyle(.checkbox).font(.callout)
+                        Toggle("记住组名", isOn: $model.rememberGroup).toggleStyle(.checkbox).font(.callout)
                         Spacer()
-                        Button("读取已保存口令") { model.loadRememberedGroup() }.buttonStyle(.link)
+                        Button("读取已保存组名") { model.loadRememberedGroup() }.buttonStyle(.link)
                     }
                     Toggle("启动时自动加入", isOn: $preferences.autoJoinGroup).toggleStyle(.checkbox).font(.callout)
                         .disabled(!model.rememberGroup)

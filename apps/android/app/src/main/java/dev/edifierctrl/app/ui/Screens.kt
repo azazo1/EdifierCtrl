@@ -195,7 +195,7 @@ fun GroupScreen() {
     Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 12.dp)) {
         Text("组", style = MaterialTheme.typography.headlineSmall)
         Text(
-            "同一口令的电脑和手机在同一局域网. 点成员即可接管它正在用的耳机.",
+            "同一局域网中使用相同组名的电脑和手机会互相发现. 点成员即可接管它正在用的耳机.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
@@ -205,7 +205,7 @@ fun GroupScreen() {
         OutlinedTextField(
             value = pass,
             onValueChange = { pass = it },
-            label = { Text("组口令") },
+            label = { Text("组名") },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
         )
