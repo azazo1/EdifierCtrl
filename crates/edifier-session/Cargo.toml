@@ -1,0 +1,9 @@
+[package]
+name = "edifier-session"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "耳机命令队列与设置读写计划"
+
+[dependencies]
+edifier-protocol = { workspace = true }

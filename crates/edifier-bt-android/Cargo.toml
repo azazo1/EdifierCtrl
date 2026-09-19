@@ -1,0 +1,18 @@
+[package]
+name = "edifier-bt-android"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Android 蓝牙适配"
+
+[dependencies]
+edifier-runtime = { workspace = true }
+edifier-protocol = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"

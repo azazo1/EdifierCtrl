@@ -1,0 +1,36 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/edifier-protocol",
+    "crates/edifier-session",
+    "crates/edifier-group",
+    "crates/edifier-runtime",
+    "crates/edifier-cli",
+    "crates/edifier-ffi",
+    "crates/edifier-bt-windows",
+    "crates/edifier-bt-linux",
+    "crates/edifier-bt-android",
+    "crates/edifier-bt-macos",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+edifier-protocol = { path = "crates/edifier-protocol" }
+edifier-session = { path = "crates/edifier-session" }
+edifier-group = { path = "crates/edifier-group" }
+edifier-runtime = { path = "crates/edifier-runtime" }
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "io-util", "net"] }
+clap = { version = "4", features = ["derive"] }
+sha2 = "0.10"
+hmac = "0.12"
+hex = "0.4"
+async-trait = "0.1"

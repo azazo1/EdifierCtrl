@@ -1,0 +1,14 @@
+<Window
+    x:Class="EdifierCtrl.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <NavigationView x:Name="Nav" IsSettingsVisible="False" SelectionChanged="OnNav">
+        <NavigationView.MenuItems>
+            <NavigationViewItem Content="设备" Tag="device"/>
+            <NavigationViewItem Content="控制" Tag="control"/>
+            <NavigationViewItem Content="组" Tag="group"/>
+            <NavigationViewItem Content="调试" Tag="debug"/>
+        </NavigationView.MenuItems>
+        <Frame x:Name="ContentFrame"/>
+    </NavigationView>
+</Window>

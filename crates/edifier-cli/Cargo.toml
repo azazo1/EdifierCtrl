@@ -1,0 +1,24 @@
+[package]
+name = "edifier-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "协议编解码调试命令行"
+
+[dependencies]
+edifier-protocol = { workspace = true }
+edifier-session = { workspace = true }
+edifier-runtime = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+edifier-bt-windows = { path = "../edifier-bt-windows" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+edifier-bt-linux = { path = "../edifier-bt-linux" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+edifier-bt-macos = { path = "../edifier-bt-macos" }

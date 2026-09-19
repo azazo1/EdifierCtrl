@@ -1,0 +1,19 @@
+[package]
+name = "edifier-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "蓝牙传输抽象与运行时事件"
+
+[dependencies]
+edifier-protocol = { workspace = true }
+edifier-session = { workspace = true }
+edifier-group = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+getrandom = "0.2"
+socket2 = "0.5"

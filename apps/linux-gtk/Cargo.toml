@@ -1,0 +1,16 @@
+[package]
+name = "edifier-linux"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "EdifierCtrl Linux GTK4 端"
+
+[dependencies]
+edifier-protocol = { path = "../../crates/edifier-protocol" }
+edifier-runtime = { path = "../../crates/edifier-runtime" }
+edifier-group = { path = "../../crates/edifier-group" }
+edifier-bt-linux = { path = "../../crates/edifier-bt-linux" }
+gtk = { version = "0.9", package = "gtk4", features = ["v4_10"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }

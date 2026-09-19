@@ -1,0 +1,34 @@
+[package]
+name = "edifier-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "核心库 C ABI, 供各端原生 UI 调用"
+
+[lib]
+name = "edifier_ffi"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+edifier-protocol = { workspace = true }
+edifier-session = { workspace = true }
+edifier-group = { workspace = true }
+edifier-runtime = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+hex = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+edifier-bt-windows = { path = "../edifier-bt-windows" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+edifier-bt-linux = { path = "../edifier-bt-linux" }
+
+[target.'cfg(target_os = "android")'.dependencies]
+edifier-bt-android = { path = "../edifier-bt-android" }
+jni = "0.21"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+edifier-bt-macos = { path = "../edifier-bt-macos" }

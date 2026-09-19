@@ -1,0 +1,28 @@
+[package]
+name = "edifier-bt-windows"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Windows WinRT 蓝牙适配: RFCOMM, BLE, 音频"
+
+[dependencies]
+edifier-protocol = { workspace = true }
+edifier-group = { workspace = true }
+edifier-runtime = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Devices_Bluetooth",
+    "Devices_Bluetooth_GenericAttributeProfile",
+    "Devices_Bluetooth_Rfcomm",
+    "Devices_Enumeration",
+    "Foundation",
+    "Foundation_Collections",
+    "Media_Audio",
+    "Networking_Sockets",
+    "Storage_Streams",
+    "Win32_System_Com",
+] }

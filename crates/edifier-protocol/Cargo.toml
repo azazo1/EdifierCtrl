@@ -1,0 +1,11 @@
+[package]
+name = "edifier-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "漫步者耳机控制协议编解码"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

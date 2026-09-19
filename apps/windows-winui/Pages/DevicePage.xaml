@@ -1,0 +1,18 @@
+<Page
+    x:Class="EdifierCtrl.Pages.DevicePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <StackPanel Padding="24" Spacing="12">
+        <TextBlock Text="设备" Style="{StaticResource TitleTextBlockStyle}"/>
+        <TextBlock x:Name="Status" TextWrapping="Wrap"/>
+        <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="扫描 RFCOMM" Click="OnScanRfcomm"/>
+            <Button Content="扫描 BLE" Click="OnScanBle"/>
+            <Button Content="连接选中" Click="OnConnect"/>
+            <Button Content="断开控制" Click="OnDisconnect"/>
+            <Button Content="读取状态" Click="OnReadout"/>
+        </StackPanel>
+        <ListView x:Name="Devices" Height="200" IsItemClickEnabled="True" ItemClick="OnDeviceClick"/>
+        <TextBlock x:Name="Events" TextWrapping="Wrap"/>
+    </StackPanel>
+</Page>

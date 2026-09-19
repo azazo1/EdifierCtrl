@@ -1,0 +1,16 @@
+[package]
+name = "edifier-group"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "局域网组身份与音频交接状态机"
+
+[dependencies]
+edifier-protocol = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+hex = { workspace = true }
