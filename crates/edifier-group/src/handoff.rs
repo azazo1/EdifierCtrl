@@ -4,7 +4,7 @@ use tracing::info;
 use crate::mac::MacAddr;
 use crate::message::{nonce_to_hex, GroupMessage, Nonce};
 
-pub const HANDOFF_DEADLINE_MS: u64 = 2000;
+pub const HANDOFF_DEADLINE_MS: u64 = 6000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {

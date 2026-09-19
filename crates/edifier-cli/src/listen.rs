@@ -1,8 +1,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use edifier_runtime::{CdFallback, GroupHub, HeadsetHost, LinkKind, UdpGroupNet};
-use tracing::info;
+use edifier_protocol::Command;
+use edifier_runtime::{CdFallback, GroupHub, HeadsetHost, LinkKind, RuntimeEvent, UdpGroupNet};
+use tracing::{info, warn};
 
 use crate::platform::{new_audio, new_headset, PlatformAudio};
 
@@ -45,11 +46,34 @@ pub async fn listen_group(
         let _ = run.run().await;
     });
 
+    let mut events = host.subscribe();
+    tokio::spawn(async move {
+        while let Ok(ev) = events.recv().await {
+            match ev {
+                RuntimeEvent::Headset(n) => println!("headset {n:?}"),
+                RuntimeEvent::BtState {
+                    connected,
+                    address,
+                    ..
+                } => println!(
+                    "bt connected={connected} {}",
+                    address.unwrap_or_else(|| "-".into())
+                ),
+                other => info!(target: "edifier_cli", ?other, "运行时事件"),
+            }
+        }
+    });
+
     if let Some(mac) = connect {
         info!(target: "edifier_cli", mac, "连接控制通道并认领音频");
         host.connect(mac, kind).await?;
         hub.adopt_headset(Some(mac.to_string())).await;
         println!("holding={mac}");
+        if let Err(err) = host.send(&Command::QueryBattery).await {
+            warn!(target: "edifier_cli", %err, "查电量失败");
+        } else {
+            info!(target: "edifier_cli", "已发送查电量");
+        }
     }
 
     if let Some(peer_id) = claim_peer {

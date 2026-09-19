@@ -5,6 +5,9 @@ package dev.edifierctrl.app
  * 实现随 libedifier_ffi.so 接入.
  */
 object EdifierNative {
+    var loaded: Boolean = true
+        private set
+
     init {
         try {
             System.loadLibrary("edifier_ffi")
@@ -12,9 +15,6 @@ object EdifierNative {
             loaded = false
         }
     }
-
-    var loaded: Boolean = true
-        private set
 
     @Volatile
     private var sessionHandle: Long = 0

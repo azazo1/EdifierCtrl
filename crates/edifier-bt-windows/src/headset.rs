@@ -99,9 +99,15 @@ impl HeadsetTransport for WindowsHeadset {
     }
 
     async fn recv(&self) -> Result<Vec<u8>, TransportError> {
-        let mut reader = self.reader.lock().await;
-        let rx = reader.as_mut().ok_or(TransportError::Closed)?;
-        rx.recv().await.ok_or(TransportError::Closed)
+        loop {
+            {
+                let mut reader = self.reader.lock().await;
+                if let Some(rx) = reader.as_mut() {
+                    return rx.recv().await.ok_or(TransportError::Closed);
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
     }
 
     async fn close(&self) -> Result<(), TransportError> {

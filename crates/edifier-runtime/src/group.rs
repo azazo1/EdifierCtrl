@@ -2,6 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use edifier_protocol::AUDIO_CONNECT_GAP_MS;
 use edifier_group::{
     derive_group, open, seal, Action, GroupId, GroupKey, GroupMessage, HandoffMachine,
     HandoffProgress, MacAddr, PeerInfo,
@@ -55,9 +56,14 @@ impl<N: GroupNet, A: AudioControl> GroupHub<N, A> {
         let local_id = local_id.into();
         let mut machine = HandoffMachine::new(local_id.clone());
         machine.can_control_headset = cd.is_some();
+        let host = hostname();
         let peer = PeerInfo {
-            id: local_id,
-            hostname: hostname(),
+            id: local_id.clone(),
+            hostname: if host == "unknown" {
+                local_id
+            } else {
+                host
+            },
             os: std::env::consts::OS.into(),
             can_audio: true,
             holding: None,
@@ -238,6 +244,11 @@ impl<N: GroupNet, A: AudioControl> GroupHub<N, A> {
                 .insert(peer.id.clone(), peer.clone());
             let _ = self.events.send(RuntimeEvent::Peer(peer.clone()));
         }
+        if matches!(msg, GroupMessage::HandoffRequest { .. })
+            && self.peer.lock().await.holding.is_some()
+        {
+            self.machine.lock().await.has_audio = true;
+        }
         let actions = self.machine.lock().await.on_message(&msg, now);
         self.apply(actions).await;
     }
@@ -265,8 +276,48 @@ impl<N: GroupNet, A: AudioControl> GroupHub<N, A> {
                     if let Err(err) = self.audio.disconnect_audio(&addr).await {
                         warn!(target: "edifier_runtime", %err, "断开音频失败");
                     }
-                    self.peer.lock().await.holding = None;
-                    self.machine.lock().await.on_audio_disconnected()
+                    let still = self
+                        .audio
+                        .audio_state(&addr)
+                        .await
+                        .unwrap_or(AudioState::Unknown);
+                    if cfg!(target_os = "android")
+                        || !matches!(still, AudioState::Disconnected)
+                    {
+                        if let Some(cd) = &self.cd {
+                            info!(
+                                target: "edifier_runtime",
+                                address = %addr,
+                                "系统层未真正断开 A2DP, 发送 CD"
+                            );
+                            if let Err(err) = cd.send_headset_disconnect().await {
+                                warn!(target: "edifier_runtime", %err, "CD 失败");
+                            } else {
+                                tokio::time::sleep(Duration::from_millis(
+                                    AUDIO_CONNECT_GAP_MS,
+                                ))
+                                .await;
+                            }
+                        }
+                    }
+                    let still = self
+                        .audio
+                        .audio_state(&addr)
+                        .await
+                        .unwrap_or(AudioState::Unknown);
+                    if matches!(still, AudioState::Connected) {
+                        warn!(
+                            target: "edifier_runtime",
+                            address = %addr,
+                            "A2DP 仍连接, 不发送 Released"
+                        );
+                        vec![Action::Report(HandoffProgress::Failed(
+                            "未能断开 A2DP".into(),
+                        ))]
+                    } else {
+                        self.peer.lock().await.holding = None;
+                        self.machine.lock().await.on_audio_disconnected()
+                    }
                 }
                 Action::SuppressAutoreconnect { mac, suppress } => {
                     let addr = mac.to_colon_string();

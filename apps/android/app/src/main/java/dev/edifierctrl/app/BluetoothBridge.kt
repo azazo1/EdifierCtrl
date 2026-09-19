@@ -6,6 +6,8 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.BluetoothSocket
+import android.content.Context
+import android.net.wifi.WifiManager
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
@@ -31,12 +33,21 @@ object BluetoothBridge {
     @Volatile
     private var lastErrorText: String = ""
 
+    @Volatile
+    private var multicastLock: WifiManager.MulticastLock? = null
+
     @JvmStatic
     fun lastError(): String = lastErrorText
 
     @JvmStatic
     fun attach(application: Application) {
         app = application
+        val wifi = application.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        val lock = wifi.createMulticastLock("edifierctrl")
+        lock.setReferenceCounted(false)
+        lock.acquire()
+        multicastLock = lock
+        Log.i(TAG, "已获取 Wi-Fi 组播锁")
         val adapter = adapter() ?: return
         adapter.getProfileProxy(
             application,
@@ -108,9 +119,13 @@ object BluetoothBridge {
     fun readRfcomm(max: Int): ByteArray {
         val sock = socket ?: return ByteArray(0)
         return try {
-            sock.soTimeout = 200
-            val buf = ByteArray(max.coerceAtLeast(1))
-            val n = sock.inputStream.read(buf)
+            val input = sock.inputStream
+            val avail = input.available()
+            if (avail <= 0) {
+                return ByteArray(0)
+            }
+            val buf = ByteArray(max.coerceAtLeast(1).coerceAtMost(avail))
+            val n = input.read(buf)
             if (n <= 0) ByteArray(0) else buf.copyOf(n)
         } catch (_: java.net.SocketTimeoutException) {
             ByteArray(0)
@@ -136,7 +151,10 @@ object BluetoothBridge {
     fun audioState(address: String): String {
         val proxy = a2dp ?: return "disconnected"
         val device = adapter()?.getRemoteDevice(address) ?: return "disconnected"
-        return if (proxy.connectedDevices.any { it.address.equals(device.address, true) }) {
+        val st = proxy.getConnectionState(device)
+        return if (st == BluetoothProfile.STATE_CONNECTED
+            || st == BluetoothProfile.STATE_CONNECTING
+        ) {
             "connected"
         } else {
             "disconnected"
@@ -144,10 +162,28 @@ object BluetoothBridge {
     }
 
     @JvmStatic
-    fun connectAudio(address: String): Int = invokeA2dp("connect", address)
+    fun connectAudio(address: String): Int {
+        invokeA2dp("connect", address)
+        repeat(25) {
+            if (audioState(address) == "connected") {
+                return 0
+            }
+            Thread.sleep(100)
+        }
+        return fail("A2DP 未连上")
+    }
 
     @JvmStatic
-    fun disconnectAudio(address: String): Int = invokeA2dp("disconnect", address)
+    fun disconnectAudio(address: String): Int {
+        invokeA2dp("disconnect", address)
+        repeat(5) {
+            if (audioState(address) != "connected") {
+                return 0
+            }
+            Thread.sleep(100)
+        }
+        return fail("A2DP 未断开")
+    }
 
     private fun invokeA2dp(method: String, address: String): Int {
         return try {

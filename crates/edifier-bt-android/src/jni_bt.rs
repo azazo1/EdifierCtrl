@@ -39,7 +39,7 @@ where
     f(&mut env).map_err(TransportError::Unavailable)
 }
 
-fn class_ref(env: &mut jni::JNIEnv) -> Result<JClass<'_>, String> {
+fn class_ref<'local>(env: &mut jni::JNIEnv<'local>) -> Result<JClass<'local>, String> {
     let g = BRIDGE.get().ok_or_else(|| "尚未绑定 BluetoothBridge".to_string())?;
     Ok(JClass::from(env.new_local_ref(g).map_err(|e| e.to_string())?))
 }
@@ -60,19 +60,22 @@ fn last_bt_error(env: &mut jni::JNIEnv) -> String {
     };
     let ok = env.call_static_method(class, "lastError", "()Ljava/lang/String;", &[]);
     match ok {
-        Ok(v) => v
-            .l()
-            .ok()
-            .and_then(|o| {
-                if o.is_null() {
-                    None
-                } else {
-                    env.get_string(&JString::from(o)).ok()
-                }
-            })
-            .map(|s| s.to_string_lossy().into_owned())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "Android 蓝牙失败".into()),
+        Ok(v) => {
+            let obj = match v.l() {
+                Ok(o) if !o.is_null() => o,
+                _ => return "Android 蓝牙失败".into(),
+            };
+            let js = JString::from(obj);
+            let text = env
+                .get_string(&js)
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if text.is_empty() {
+                "Android 蓝牙失败".into()
+            } else {
+                text
+            }
+        }
         Err(_) => "Android 蓝牙失败".into(),
     }
 }
@@ -105,11 +108,8 @@ fn call_string(name: &str) -> Result<String, TransportError> {
             return Err("BluetoothBridge 返回空".into());
         }
         let js = JString::from(obj);
-        Ok(env
-            .get_string(&js)
-            .map_err(|e| e.to_string())?
-            .to_string_lossy()
-            .into_owned())
+        let java_str = env.get_string(&js).map_err(|e| e.to_string())?;
+        Ok(java_str.to_string_lossy().into_owned())
     })
 }
 

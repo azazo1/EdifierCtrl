@@ -136,7 +136,7 @@ impl<T: HeadsetTransport> HeadsetHost<T> {
                 Ok(bytes) if bytes.is_empty() => continue,
                 Ok(bytes) => self.push_bytes(&bytes).await,
                 Err(TransportError::Closed) => {
-                    info!(target: "edifier_runtime", "控制通道关闭, 停止接收");
+                    debug!(target: "edifier_runtime", "控制通道关闭, 停止接收");
                     return Ok(());
                 }
                 Err(err) => return Err(err),

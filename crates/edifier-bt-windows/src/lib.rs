@@ -1,6 +1,8 @@
 //! Windows WinRT 蓝牙适配.
 
 #[cfg(windows)]
+mod a2dp;
+#[cfg(windows)]
 mod addr;
 #[cfg(windows)]
 mod audio;

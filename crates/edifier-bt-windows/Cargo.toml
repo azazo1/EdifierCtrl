@@ -24,5 +24,8 @@ windows = { version = "0.58", features = [
     "Media_Audio",
     "Networking_Sockets",
     "Storage_Streams",
+    "System",
+    "Win32_Devices_Bluetooth",
+    "Win32_Foundation",
     "Win32_System_Com",
 ] }
