@@ -1,33 +1,30 @@
 package dev.edifierctrl.app
 
-/**
- * JNI 对应 crates/edifier-ffi/include/edifier.h.
- * 实现随 libedifier_ffi.so 接入.
- */
+import android.util.Log
+
+/** JNI 声明只由应用会话 worker 调用, 不持有 Activity 或会话句柄. */
 object EdifierNative {
-    var loaded: Boolean = true
+    var loaded: Boolean = false
+        private set
+    var loadError: String? = null
         private set
 
-    init {
-        try {
+    fun ensureLoaded(): Boolean {
+        if (loaded) return true
+        return try {
             System.loadLibrary("edifier_ffi")
-        } catch (_: UnsatisfiedLinkError) {
-            loaded = false
+            loaded = true
+            loadError = null
+            true
+        } catch (error: LinkageError) {
+            loadError = error.message ?: "无法加载 libedifier_ffi.so"
+            Log.e("EdifierNative", "加载核心失败", error)
+            false
+        } catch (error: SecurityException) {
+            loadError = error.message ?: "系统拒绝加载核心"
+            Log.e("EdifierNative", "加载核心失败", error)
+            false
         }
-    }
-
-    @Volatile
-    private var sessionHandle: Long = 0
-
-    @Synchronized
-    fun ensureSession(): Long {
-        if (!loaded) {
-            return 0
-        }
-        if (sessionHandle == 0L) {
-            sessionHandle = sessionNew(android.os.Build.MODEL)
-        }
-        return sessionHandle
     }
 
     external fun version(): String
@@ -44,6 +41,7 @@ object EdifierNative {
     external fun sessionSendJson(session: Long, commandJson: String): Int
     external fun sessionPollEvent(session: Long): String?
     external fun sessionGroupJoin(session: Long, passphrase: String): Int
+    external fun sessionGroupLeave(session: Long): Int
     external fun sessionGroupPeers(session: Long): String?
     external fun sessionGroupClaim(session: Long, mac: String): Int
     external fun sessionGroupClaimPeer(session: Long, peerId: String): Int
