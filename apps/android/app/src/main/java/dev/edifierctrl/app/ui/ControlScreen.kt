@@ -9,15 +9,23 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -32,8 +40,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.edifierctrl.app.EdifierNative
 import kotlin.math.roundToInt
@@ -101,7 +111,7 @@ fun ControlScreen() {
     ) {
         Text("控制", style = MaterialTheme.typography.headlineSmall)
         Text(
-            if (SessionUi.connected) "改完点卡片上的生效才会发到耳机." else "先到设备页连接耳机.",
+            if (SessionUi.connected) "改完点卡片右上角对号才会发到耳机." else "先到设备页连接耳机.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -122,7 +132,18 @@ fun ControlScreen() {
                 }
             }) { Text("读取全部") }
         }
-        Section("名称", "改完要删配对记录再配对才生效.") {
+        Section(
+            "名称",
+            "改完要删配对记录再配对才生效.",
+            dirty = name.dirty,
+            onRevert = { name.revert(SessionUi.deviceName.orEmpty()) },
+            onApply = {
+                val escaped = name.value.replace("\\", "\\\\").replace("\"", "\\\"")
+                SessionUi.hint = sendJson(session, """{"op":"set_name","name":"$escaped"}""")
+                SessionUi.deviceName = name.value
+                name.markApplied()
+            },
+        ) {
             OutlinedTextField(
                 value = name.value,
                 onValueChange = { name.edit(it, SessionUi.deviceName.orEmpty()) },
@@ -130,26 +151,39 @@ fun ControlScreen() {
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
             )
-            ApplyBar(name.dirty, { name.revert(SessionUi.deviceName.orEmpty()) }) {
-                val escaped = name.value.replace("\\", "\\\\").replace("\"", "\\\"")
-                SessionUi.hint = sendJson(session, """{"op":"set_name","name":"$escaped"}""")
-                SessionUi.deviceName = name.value
-                name.markApplied()
-            }
         }
-        Section("降噪") {
+        Section(
+            "降噪",
+            dirty = noise.dirty,
+            onRevert = { noise.revert(SessionUi.noise) },
+            onApply = {
+                val mode = noise.value
+                if (mode != null) {
+                    SessionUi.hint = sendJson(session, """{"op":"set_noise_mode","mode":"$mode"}""")
+                    SessionUi.noise = mode
+                    noise.markApplied()
+                }
+            },
+        ) {
             ChipRow(
                 options = listOf("normal" to "关闭", "reduction" to "降噪", "ambient" to "通透"),
                 selected = noise.value,
             ) { mode -> noise.edit(mode, SessionUi.noise) }
-            ApplyBar(noise.dirty, { noise.revert(SessionUi.noise) }) {
-                val mode = noise.value ?: return@ApplyBar
-                SessionUi.hint = sendJson(session, """{"op":"set_noise_mode","mode":"$mode"}""")
-                SessionUi.noise = mode
-                noise.markApplied()
-            }
         }
-        Section("通透音量", "仅通透模式有效, -3 到 3.") {
+        Section(
+            "通透音量",
+            "仅通透模式有效, -3 到 3.",
+            dirty = ambient.dirty,
+            onRevert = { ambient.revert(SessionUi.ambientVolume) },
+            onApply = {
+                SessionUi.hint = sendJson(
+                    session,
+                    """{"op":"set_ambient_volume","volume":${ambient.value}}""",
+                )
+                SessionUi.ambientVolume = ambient.value
+                ambient.markApplied()
+            },
+        ) {
             Text("${ambient.value}")
             Slider(
                 value = ambient.value.toFloat(),
@@ -157,16 +191,34 @@ fun ControlScreen() {
                 valueRange = -3f..3f,
                 steps = 5,
             )
-            ApplyBar(ambient.dirty, { ambient.revert(SessionUi.ambientVolume) }) {
-                SessionUi.hint = sendJson(
-                    session,
-                    """{"op":"set_ambient_volume","volume":${ambient.value}}""",
-                )
-                SessionUi.ambientVolume = ambient.value
-                ambient.markApplied()
-            }
         }
-        Section("按键可切换的模式", "至少选 2 项.") {
+        Section(
+            "按键可切换的模式",
+            "至少选 2 项.",
+            dirty = controlDirty,
+            onRevert = {
+                csNormal.revert(SessionUi.controlNormal)
+                csReduction.revert(SessionUi.controlReduction)
+                csAmbient.revert(SessionUi.controlAmbient)
+            },
+            onApply = {
+                val n = listOf(csNormal.value, csReduction.value, csAmbient.value).count { it }
+                if (n < 2) {
+                    SessionUi.hint = "至少选 2 项"
+                } else {
+                    SessionUi.hint = sendJson(
+                        session,
+                        """{"op":"set_control_settings","normal":${csNormal.value},"reduction":${csReduction.value},"ambient":${csAmbient.value}}""",
+                    )
+                    SessionUi.controlNormal = csNormal.value
+                    SessionUi.controlReduction = csReduction.value
+                    SessionUi.controlAmbient = csAmbient.value
+                    csNormal.markApplied()
+                    csReduction.markApplied()
+                    csAmbient.markApplied()
+                }
+            },
+        ) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
                     selected = csNormal.value,
@@ -184,29 +236,20 @@ fun ControlScreen() {
                     label = { Text("通透") },
                 )
             }
-            ApplyBar(controlDirty, {
-                csNormal.revert(SessionUi.controlNormal)
-                csReduction.revert(SessionUi.controlReduction)
-                csAmbient.revert(SessionUi.controlAmbient)
-            }) {
-                val n = listOf(csNormal.value, csReduction.value, csAmbient.value).count { it }
-                if (n < 2) {
-                    SessionUi.hint = "至少选 2 项"
-                    return@ApplyBar
-                }
-                SessionUi.hint = sendJson(
-                    session,
-                    """{"op":"set_control_settings","normal":${csNormal.value},"reduction":${csReduction.value},"ambient":${csAmbient.value}}""",
-                )
-                SessionUi.controlNormal = csNormal.value
-                SessionUi.controlReduction = csReduction.value
-                SessionUi.controlAmbient = csAmbient.value
-                csNormal.markApplied()
-                csReduction.markApplied()
-                csAmbient.markApplied()
-            }
         }
-        Section("音效") {
+        Section(
+            "音效",
+            dirty = effect.dirty,
+            onRevert = { effect.revert(SessionUi.effect) },
+            onApply = {
+                val v = effect.value
+                if (v != null) {
+                    SessionUi.hint = sendJson(session, """{"op":"set_sound_effect","effect":"$v"}""")
+                    SessionUi.effect = v
+                    effect.markApplied()
+                }
+            },
+        ) {
             ChipRow(
                 options = listOf(
                     "normal" to "标准",
@@ -216,14 +259,20 @@ fun ControlScreen() {
                 ),
                 selected = effect.value,
             ) { v -> effect.edit(v, SessionUi.effect) }
-            ApplyBar(effect.dirty, { effect.revert(SessionUi.effect) }) {
-                val v = effect.value ?: return@ApplyBar
-                SessionUi.hint = sendJson(session, """{"op":"set_sound_effect","effect":"$v"}""")
-                SessionUi.effect = v
-                effect.markApplied()
-            }
         }
-        Section("提示音量") {
+        Section(
+            "提示音量",
+            dirty = prompt.dirty,
+            onRevert = { prompt.revert(SessionUi.promptVolume) },
+            onApply = {
+                SessionUi.hint = sendJson(
+                    session,
+                    """{"op":"set_prompt_volume","volume":${prompt.value}}""",
+                )
+                SessionUi.promptVolume = prompt.value
+                prompt.markApplied()
+            },
+        ) {
             Text("${prompt.value}")
             Slider(
                 value = prompt.value.toFloat(),
@@ -231,16 +280,27 @@ fun ControlScreen() {
                 valueRange = 0f..15f,
                 steps = 14,
             )
-            ApplyBar(prompt.dirty, { prompt.revert(SessionUi.promptVolume) }) {
-                SessionUi.hint = sendJson(
-                    session,
-                    """{"op":"set_prompt_volume","volume":${prompt.value}}""",
-                )
-                SessionUi.promptVolume = prompt.value
-                prompt.markApplied()
-            }
         }
-        Section("定时关机", "断电后会回到默认.") {
+        Section(
+            "定时关机",
+            "断电后会回到默认.",
+            dirty = shutdownDirty,
+            onRevert = {
+                shutdownOn.revert(SessionUi.shutdownOn)
+                shutdownMin.revert(SessionUi.shutdownMinutes)
+            },
+            onApply = {
+                SessionUi.hint = if (shutdownOn.value) {
+                    sendJson(session, """{"op":"set_shutdown_timer","minutes":${shutdownMin.value}}""")
+                } else {
+                    sendJson(session, """{"op":"disable_shutdown_timer"}""")
+                }
+                SessionUi.shutdownOn = shutdownOn.value
+                SessionUi.shutdownMinutes = shutdownMin.value
+                shutdownOn.markApplied()
+                shutdownMin.markApplied()
+            },
+        ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -262,40 +322,34 @@ fun ControlScreen() {
                 steps = 178,
                 enabled = shutdownOn.value,
             )
-            ApplyBar(shutdownDirty, {
-                shutdownOn.revert(SessionUi.shutdownOn)
-                shutdownMin.revert(SessionUi.shutdownMinutes)
-            }) {
-                SessionUi.hint = if (shutdownOn.value) {
-                    sendJson(session, """{"op":"set_shutdown_timer","minutes":${shutdownMin.value}}""")
-                } else {
-                    sendJson(session, """{"op":"disable_shutdown_timer"}""")
-                }
-                SessionUi.shutdownOn = shutdownOn.value
-                SessionUi.shutdownMinutes = shutdownMin.value
-                shutdownOn.markApplied()
-                shutdownMin.markApplied()
-            }
         }
-        Section("LDAC", "改完要重新配对才生效, 同时会关掉定时关机.") {
+        Section(
+            "LDAC",
+            "改完要重新配对才生效, 同时会关掉定时关机.",
+            dirty = ldac.dirty,
+            onRevert = { ldac.revert(SessionUi.ldac) },
+            onApply = {
+                val mode = ldac.value
+                if (mode != null) {
+                    SessionUi.hint = sendJson(session, """{"op":"set_ldac","mode":"$mode"}""")
+                    SessionUi.ldac = mode
+                    ldac.markApplied()
+                }
+            },
+        ) {
             ChipRow(
                 options = listOf("off" to "关闭", "rate48k" to "44.1k / 48k", "rate96k" to "96k"),
                 selected = ldac.value,
             ) { mode -> ldac.edit(mode, SessionUi.ldac) }
-            ApplyBar(ldac.dirty, { ldac.revert(SessionUi.ldac) }) {
-                val mode = ldac.value ?: return@ApplyBar
-                SessionUi.hint = sendJson(session, """{"op":"set_ldac","mode":"$mode"}""")
-                SessionUi.ldac = mode
-                ldac.markApplied()
-            }
         }
-        Section("开关") {
-            ToggleRow("游戏模式", game.value) { game.edit(it, SessionUi.gameMode) }
-            ToggleRow("无音频 30 分钟自动关机", autoOff.value) { autoOff.edit(it, SessionUi.autoPowerOff) }
-            ApplyBar(switchDirty, {
+        Section(
+            "开关",
+            dirty = switchDirty,
+            onRevert = {
                 game.revert(SessionUi.gameMode)
                 autoOff.revert(SessionUi.autoPowerOff)
-            }) {
+            },
+            onApply = {
                 if (game.dirty) {
                     SessionUi.hint = sendJson(session, """{"op":"set_game_mode","on":${game.value}}""")
                     SessionUi.gameMode = game.value
@@ -306,7 +360,10 @@ fun ControlScreen() {
                     SessionUi.autoPowerOff = autoOff.value
                     autoOff.markApplied()
                 }
-            }
+            },
+        ) {
+            ToggleRow("游戏模式", game.value) { game.edit(it, SessionUi.gameMode) }
+            ToggleRow("无音频 30 分钟自动关机", autoOff.value) { autoOff.edit(it, SessionUi.autoPowerOff) }
         }
         Section("播放") {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -373,24 +430,36 @@ private fun <T> rememberDraft(committed: T): CardDraft<T> {
 }
 
 @Composable
-private fun ApplyBar(dirty: Boolean, onRevert: () -> Unit, onApply: () -> Unit) {
-    if (!dirty) {
-        return
-    }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(onClick = onRevert) { Text("撤回") }
-        Button(onClick = onApply) { Text("生效") }
-    }
-}
-
-@Composable
-private fun Section(title: String, caption: String? = null, content: @Composable ColumnScope.() -> Unit) {
+private fun Section(
+    title: String,
+    caption: String? = null,
+    dirty: Boolean = false,
+    onRevert: (() -> Unit)? = null,
+    onApply: (() -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                if (dirty && onRevert != null && onApply != null) {
+                    CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
+                        FilledTonalIconButton(onClick = onRevert, modifier = Modifier.size(28.dp)) {
+                            Icon(Icons.AutoMirrored.Outlined.Undo, contentDescription = "撤回", modifier = Modifier.size(14.dp))
+                        }
+                        FilledIconButton(onClick = onApply, modifier = Modifier.size(28.dp)) {
+                            Icon(Icons.Outlined.Check, contentDescription = "生效", modifier = Modifier.size(14.dp))
+                        }
+                    }
+                }
+            }
             if (caption != null) {
                 Text(caption, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
