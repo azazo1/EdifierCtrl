@@ -56,7 +56,7 @@
                         <TextBlock x:Name="ServiceLabel" Text="耳机服务启动中" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                     </StackPanel>
                     <Button x:Name="VersionButton" Click="OnVersion" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
-                            Background="Transparent" BorderThickness="0" Padding="0,8" FontSize="11" FontFamily="Consolas"/>
+                            Background="Transparent" BorderThickness="0" Padding="12,8" FontSize="11" FontFamily="Consolas"/>
                 </StackPanel>
             </Grid>
         </Border>
