@@ -7,12 +7,13 @@ use std::time::Duration;
 
 use edifier_protocol::DeviceProfile;
 use edifier_runtime::{
-    CdFallback, GroupHub, HeadsetHost, LinkKind, RuntimeEvent, TransportError, UdpGroupNet,
+    AudioControl, CdFallback, GroupHub, HeadsetHost, LinkKind, RuntimeEvent, TransportError,
+    UdpGroupNet,
 };
 use tokio::runtime::Runtime;
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::command_json::CommandJson;
 use crate::cstr::{fail, set_error, to_raw};
@@ -163,9 +164,26 @@ pub extern "C" fn edifier_session_connect(
 pub extern "C" fn edifier_session_disconnect(session: *mut FfiSession) -> c_int {
     unit_ok((|| {
         let s = session_ref(session)?;
+        let mac = {
+            let mut addr = s.headset_addr.lock().map_err(|e| e.to_string())?;
+            let old = addr.clone();
+            *addr = None;
+            old
+        };
         s.rt.block_on(s.host.disconnect()).map_err(map_err)?;
-        *s.headset_addr.lock().map_err(|e| e.to_string())? = None;
-        sync_holding(s)
+        if let Some(hub) = s.group.lock().map_err(|e| e.to_string())?.clone() {
+            s.rt.block_on(hub.adopt_headset(None));
+        } else if let Some(mac) = mac {
+            if let Err(err) = s.rt.block_on(s.audio.disconnect_audio(&mac)) {
+                warn!(
+                    target: "edifier_ffi",
+                    address = %mac,
+                    error = %err,
+                    "未能断开 A2DP"
+                );
+            }
+        }
+        Ok(())
     })())
 }
 
@@ -343,6 +361,17 @@ fn sync_holding(s: &FfiSession) -> Result<(), String> {
         .clone();
     if let Some(hub) = s.group.lock().map_err(|e| e.to_string())?.clone() {
         s.rt.block_on(hub.adopt_headset(mac));
+        return Ok(());
+    }
+    if let Some(mac) = mac {
+        if let Err(err) = s.rt.block_on(s.audio.connect_audio(&mac)) {
+            warn!(
+                target: "edifier_ffi",
+                address = %mac,
+                error = %err,
+                "未能连接 A2DP"
+            );
+        }
     }
     Ok(())
 }

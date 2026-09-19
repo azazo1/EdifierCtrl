@@ -15,17 +15,6 @@ public sealed partial class ControlPage : Page
         {
             SessionState.Changed += OnState;
             OnState();
-            if (SessionState.Connected)
-            {
-                try
-                {
-                    EdifierNative.Readout("basedevice");
-                }
-                catch
-                {
-                    // 读失败时界面仍可手动发.
-                }
-            }
         };
         Unloaded += (_, _) => SessionState.Changed -= OnState;
     }
@@ -60,15 +49,19 @@ public sealed partial class ControlPage : Page
 
     private void OnReadout(object sender, RoutedEventArgs e)
     {
-        try
+        SessionState.SetHint("正在读取状态");
+        _ = Task.Run(() =>
         {
-            EdifierNative.Readout("basedevice");
-            SessionState.SetHint("已请求读取状态");
-        }
-        catch (Exception ex)
-        {
-            SessionState.SetHint(ex.Message);
-        }
+            try
+            {
+                EdifierNative.Readout("basedevice");
+                SessionState.SetHint("已请求读取状态");
+            }
+            catch (Exception ex)
+            {
+                SessionState.SetHint(ex.Message);
+            }
+        });
     }
 
     private void OnSetName(object sender, RoutedEventArgs e)

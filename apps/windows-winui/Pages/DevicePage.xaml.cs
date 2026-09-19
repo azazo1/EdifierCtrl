@@ -68,23 +68,28 @@ public sealed partial class DevicePage : Page
 
     private void Connect(DeviceItem row)
     {
-        try
+        var kind = KindValue();
+        SessionState.SetHint("正在连接 " + row.Name);
+        _ = Task.Run(() =>
         {
-            EdifierNative.Connect(row.Address, KindValue());
-            SessionState.SetConnected(true, row.Address, row.Name);
             try
             {
-                EdifierNative.SendJson("""{"op":"query_battery"}""");
+                EdifierNative.Connect(row.Address, kind);
+                SessionState.SetConnected(true, row.Address, row.Name);
+                try
+                {
+                    EdifierNative.SendJson("""{"op":"query_battery"}""");
+                }
+                catch
+                {
+                    // 查电量失败不影响已连接.
+                }
             }
-            catch
+            catch (Exception ex)
             {
-                // 查电量失败不影响已连接.
+                SessionState.SetHint(ex.Message);
             }
-        }
-        catch (Exception ex)
-        {
-            SessionState.SetHint(ex.Message);
-        }
+        });
     }
 
     private void OnDisconnect(object sender, RoutedEventArgs e)

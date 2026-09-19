@@ -30,12 +30,16 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import dev.edifierctrl.app.EdifierNative
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private data class ConfirmOp(val title: String, val body: String, val json: String)
 
@@ -45,11 +49,7 @@ fun ControlScreen() {
     var confirm by remember { mutableStateOf<ConfirmOp?>(null) }
     var nameDraft by remember { mutableStateOf(SessionUi.deviceName.orEmpty()) }
     val session = remember { EdifierNative.ensureSession() }
-    LaunchedEffect(SessionUi.connected) {
-        if (SessionUi.connected) {
-            nativeCall { EdifierNative.sessionReadout(session, "basedevice"); "ok" }
-        }
-    }
+    val scope = rememberCoroutineScope()
     LaunchedEffect(SessionUi.deviceName) {
         if (nameDraft.isEmpty()) {
             nameDraft = SessionUi.deviceName.orEmpty()
@@ -74,9 +74,14 @@ fun ControlScreen() {
             InfoLine("MAC", SessionUi.mac ?: "-")
             InfoLine("固件", SessionUi.firmware ?: "-")
             FilledTonalButton(onClick = {
-                SessionUi.hint = nativeCall {
-                    val rc = EdifierNative.sessionReadout(session, "basedevice")
-                    if (rc != 0) EdifierNative.lastError() else "已请求读取状态"
+                SessionUi.hint = "正在读取状态"
+                scope.launch {
+                    SessionUi.hint = withContext(Dispatchers.IO) {
+                        nativeCall {
+                            val rc = EdifierNative.sessionReadout(session, "basedevice")
+                            if (rc != 0) EdifierNative.lastError() else "已请求读取状态"
+                        }
+                    }
                 }
             }) { Text("读取全部") }
         }

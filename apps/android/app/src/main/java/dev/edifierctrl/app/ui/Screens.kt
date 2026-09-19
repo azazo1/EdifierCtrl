@@ -29,6 +29,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -36,7 +37,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.edifierctrl.app.EdifierNative
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 
 @Composable
@@ -68,10 +72,11 @@ fun DeviceScreen() {
     var kind by remember { mutableStateOf("rfcomm") }
     var scanning by remember { mutableStateOf(false) }
     val session = remember { EdifierNative.ensureSession() }
+    val scope = rememberCoroutineScope()
     Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 12.dp)) {
         Text("设备", style = MaterialTheme.typography.headlineSmall)
         Text(
-            "只列出系统里已经配对的耳机. 点卡片即可连接控制通道.",
+            "只列出系统里已经配对的耳机. 点卡片会连控制通道和系统音频.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
@@ -126,17 +131,26 @@ fun DeviceScreen() {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     onClick = {
-                        SessionUi.hint = nativeCall {
-                            val rc = EdifierNative.sessionConnect(session, row.address, kind)
-                            if (rc != 0) {
-                                EdifierNative.lastError()
-                            } else {
-                                SessionUi.address = row.address
-                                SessionUi.deviceName = row.name.ifBlank { row.address }
-                                SessionUi.connected = true
-                                EdifierNative.sessionSendJson(session, """{"op":"query_battery"}""")
-                                "已连接 ${row.name.ifBlank { row.address }}"
+                        val name = row.name.ifBlank { row.address }
+                        SessionUi.hint = "正在连接 $name"
+                        scope.launch {
+                            val result = withContext(Dispatchers.IO) {
+                                nativeCall {
+                                    val rc = EdifierNative.sessionConnect(session, row.address, kind)
+                                    if (rc != 0) {
+                                        EdifierNative.lastError()
+                                    } else {
+                                        EdifierNative.sessionSendJson(session, """{"op":"query_battery"}""")
+                                        "已连接 $name"
+                                    }
+                                }
                             }
+                            if (result.startsWith("已连接")) {
+                                SessionUi.address = row.address
+                                SessionUi.deviceName = name
+                                SessionUi.connected = true
+                            }
+                            SessionUi.hint = result
                         }
                     },
                 ) {

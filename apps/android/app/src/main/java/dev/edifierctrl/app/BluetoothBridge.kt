@@ -163,6 +163,7 @@ object BluetoothBridge {
 
     @JvmStatic
     fun connectAudio(address: String): Int {
+        waitA2dp()
         invokeA2dp("connect", address)
         repeat(25) {
             if (audioState(address) == "connected") {
@@ -183,6 +184,18 @@ object BluetoothBridge {
             Thread.sleep(100)
         }
         return fail("A2DP 未断开")
+    }
+
+    private fun waitA2dp() {
+        if (a2dp != null) {
+            return
+        }
+        repeat(20) {
+            if (a2dp != null) {
+                return
+            }
+            Thread.sleep(100)
+        }
     }
 
     private fun invokeA2dp(method: String, address: String): Int {
