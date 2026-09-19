@@ -8,6 +8,7 @@ namespace EdifierCtrl.Pages;
 public sealed partial class DevicePage : Page
 {
     private readonly List<DeviceItem> _scanned = [];
+    private string _listKey = "";
 
     public DevicePage()
     {
@@ -47,34 +48,43 @@ public sealed partial class DevicePage : Page
     private void Scan()
     {
         var kind = KindValue();
-        try
+        SessionState.SetHint("正在扫描...");
+        _ = Task.Run(() =>
         {
-            var json = EdifierNative.Scan(kind);
-            _scanned.Clear();
-            using var doc = JsonDocument.Parse(json);
-            foreach (var item in doc.RootElement.EnumerateArray())
+            try
             {
-                var address = item.GetProperty("address").GetString() ?? "";
-                var name = item.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
-                if (kind != "rfcomm" && !SessionState.IsEdifierName(name))
+                var json = EdifierNative.Scan(kind);
+                var items = new List<DeviceItem>();
+                using var doc = JsonDocument.Parse(json);
+                foreach (var item in doc.RootElement.EnumerateArray())
                 {
-                    continue;
+                    var address = item.GetProperty("address").GetString() ?? "";
+                    var name = item.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
+                    if (kind != "rfcomm" && !SessionState.IsEdifierName(name))
+                    {
+                        continue;
+                    }
+                    items.Add(new DeviceItem
+                    {
+                        Address = address,
+                        Name = string.IsNullOrWhiteSpace(name) ? "未命名耳机" : name,
+                    });
                 }
-                _scanned.Add(new DeviceItem
+                DispatcherQueue.TryEnqueue(() =>
                 {
-                    Address = address,
-                    Name = string.IsNullOrWhiteSpace(name) ? "未命名耳机" : name,
+                    _scanned.Clear();
+                    _scanned.AddRange(items);
+                    ShowDevices();
+                    SessionState.SetHint(_scanned.Count == 0 && !SessionState.Peers.Any(p => !string.IsNullOrEmpty(p.Holding))
+                        ? "没有发现漫步者耳机. 请先在系统蓝牙里配对."
+                        : $"找到 {Devices.Items.Count} 台.");
                 });
             }
-            ShowDevices();
-            SessionState.SetHint(_scanned.Count == 0 && !SessionState.Peers.Any(p => !string.IsNullOrEmpty(p.Holding))
-                ? "没有发现漫步者耳机. 请先在系统蓝牙里配对."
-                : $"找到 {Devices.Items.Count} 台.");
-        }
-        catch (Exception ex)
-        {
-            SessionState.SetHint(ex.Message);
-        }
+            catch (Exception ex)
+            {
+                SessionState.SetHint(ex.Message);
+            }
+        });
     }
 
     private void ShowDevices()
@@ -103,7 +113,14 @@ public sealed partial class DevicePage : Page
                 Action = "被 " + peer.Host + " 占用 · 点按接管",
             };
         }
-        Devices.ItemsSource = map.Values.ToList();
+        var next = map.Values.ToList();
+        var listKey = string.Join("|", next.Select(r => r.Address + "\t" + r.Name + "\t" + r.PeerId + "\t" + r.Action));
+        if (listKey == _listKey)
+        {
+            return;
+        }
+        _listKey = listKey;
+        Devices.ItemsSource = next;
     }
 
     private static DeviceItem Decorate(string address, string name)

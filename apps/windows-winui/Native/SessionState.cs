@@ -266,7 +266,12 @@ internal static class SessionState
                     : null;
                 map[id] = new GroupPeer(id, host, string.IsNullOrEmpty(holding) ? null : holding);
             }
-            Peers = map.Values.ToList();
+            var next = map.Values.OrderBy(p => p.Id, StringComparer.Ordinal).ToList();
+            if (PeersEqual(Peers, next))
+            {
+                return;
+            }
+            Peers = next;
             Raise();
         }
         catch
@@ -283,6 +288,22 @@ internal static class SessionState
         }
         static string Norm(string s) => new string(s.Where(char.IsLetterOrDigit).ToArray());
         return string.Equals(Norm(a), Norm(b), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool PeersEqual(IReadOnlyList<GroupPeer> a, IReadOnlyList<GroupPeer> b)
+    {
+        if (a.Count != b.Count)
+        {
+            return false;
+        }
+        for (var i = 0; i < a.Count; i++)
+        {
+            if (a[i].Id != b[i].Id || a[i].Host != b[i].Host || a[i].Holding != b[i].Holding)
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     public static GroupPeer? HolderOf(string address)
