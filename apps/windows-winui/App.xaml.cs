@@ -9,6 +9,30 @@ public partial class App : Application
 
     public App()
     {
+        try
+        {
+            File.WriteAllText(
+                Path.Combine(AppContext.BaseDirectory, "launch.log"),
+                "App ctor\n");
+        }
+        catch
+        {
+            // 忽略启动日志失败.
+        }
+        UnhandledException += (_, e) =>
+        {
+            try
+            {
+                File.AppendAllText(
+                    Path.Combine(AppContext.BaseDirectory, "launch.log"),
+                    e.Exception.ToString() + Environment.NewLine);
+            }
+            catch
+            {
+                // 写日志失败时仍把异常标成已处理, 避免进程直接消失.
+            }
+            e.Handled = true;
+        };
         InitializeComponent();
     }
 
@@ -16,14 +40,24 @@ public partial class App : Application
     {
         try
         {
+            File.WriteAllText(
+                Path.Combine(AppContext.BaseDirectory, "launch.log"),
+                "OnLaunched\n");
             EdifierNative.EnsureSession();
+            _window = new MainWindow();
+            _window.Closed += (_, _) => EdifierNative.Shutdown();
+            _window.Activate();
+            _ = Task.Run(SessionState.TryAutoJoin);
+            File.AppendAllText(
+                Path.Combine(AppContext.BaseDirectory, "launch.log"),
+                "activated\n");
         }
-        catch
+        catch (Exception ex)
         {
-            // 没有 dll 时界面仍可打开, 页面会提示.
+            File.WriteAllText(
+                Path.Combine(AppContext.BaseDirectory, "launch.log"),
+                ex.ToString());
+            throw;
         }
-        _window = new MainWindow();
-        _window.Closed += (_, _) => EdifierNative.Shutdown();
-        _window.Activate();
     }
 }

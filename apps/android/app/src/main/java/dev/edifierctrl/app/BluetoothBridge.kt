@@ -74,6 +74,9 @@ object BluetoothBridge {
         val adapter = adapter() ?: return "[]"
         val arr = JSONArray()
         for (device in adapter.bondedDevices.orEmpty()) {
+            if (!isEdifier(device)) {
+                continue
+            }
             val o = JSONObject()
             o.put("address", device.address)
             o.put("name", device.name ?: "")
@@ -81,7 +84,30 @@ object BluetoothBridge {
             o.put("service_uuid", RFCOMM)
             arr.put(o)
         }
-        Log.i(TAG, "bonded=${arr.length()}")
+        Log.i(TAG, "edifier=${arr.length()}")
+        return arr.toString()
+    }
+
+    @JvmStatic
+    fun connectedEdifier(): String {
+        waitA2dp()
+        val arr = JSONArray()
+        val seen = HashSet<String>()
+        fun add(device: BluetoothDevice) {
+            if (!isEdifier(device)) {
+                return
+            }
+            val addr = device.address ?: return
+            if (!seen.add(addr)) {
+                return
+            }
+            val o = JSONObject()
+            o.put("address", addr)
+            o.put("name", device.name ?: "")
+            arr.put(o)
+        }
+        a2dp?.connectedDevices.orEmpty().forEach(::add)
+        Log.i(TAG, "connectedEdifier=${arr.length()}")
         return arr.toString()
     }
 
@@ -211,6 +237,15 @@ object BluetoothBridge {
         } catch (e: Exception) {
             fail("A2DP $method: ${e.message}")
         }
+    }
+
+    private fun isEdifier(device: BluetoothDevice): Boolean {
+        val name = device.name.orEmpty()
+        if (name.contains("EDIFIER", ignoreCase = true) || name.contains("漫步者")) {
+            return true
+        }
+        val target = UUID.fromString(RFCOMM)
+        return device.uuids.orEmpty().any { it.uuid == target }
     }
 
     private fun adapter(): BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()

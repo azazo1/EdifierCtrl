@@ -1,4 +1,3 @@
-using System.Text.Json;
 using EdifierCtrl.Native;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -9,6 +8,7 @@ namespace EdifierCtrl.Pages;
 public sealed partial class GroupPage : Page
 {
     private DispatcherTimer? _timer;
+    private string _peerKey = "";
 
     public GroupPage()
     {
@@ -32,12 +32,14 @@ public sealed partial class GroupPage : Page
             {
                 if (SessionState.GroupJoined)
                 {
-                    RefreshPeers();
+                    SessionState.RefreshPeers();
+                    ShowPeers();
                 }
             };
             _timer.Start();
             if (SessionState.GroupJoined)
             {
+                JoinBtn.Content = "已加入";
                 RefreshPeers();
             }
         };
@@ -64,7 +66,9 @@ public sealed partial class GroupPage : Page
             }
             SessionState.GroupJoined = true;
             SessionState.Holding = EdifierNative.Holding();
+            JoinBtn.Content = "已加入";
             SessionState.SetHint("已加入组. 点成员接管其耳机.");
+            SessionState.RefreshPeers();
             RefreshPeers();
         }
         catch (Exception ex)
@@ -77,36 +81,29 @@ public sealed partial class GroupPage : Page
 
     private void RefreshPeers()
     {
-        try
-        {
-            var map = new Dictionary<string, PeerItem>(StringComparer.Ordinal);
-            using var doc = JsonDocument.Parse(EdifierNative.GroupPeers());
-            foreach (var item in doc.RootElement.EnumerateArray())
+        SessionState.RefreshPeers();
+        ShowPeers();
+    }
+
+    private void ShowPeers()
+    {
+        var next = SessionState.Peers
+            .Select(p => new PeerItem
             {
-                var id = item.GetProperty("id").GetString() ?? "";
-                var host = item.TryGetProperty("hostname", out var h) ? h.GetString() ?? id : id;
-                if (string.IsNullOrWhiteSpace(host))
-                {
-                    host = id;
-                }
-                var holding = item.TryGetProperty("holding", out var hold) && hold.ValueKind == JsonValueKind.String
-                    ? hold.GetString()
-                    : null;
-                map[id] = new PeerItem
-                {
-                    Id = id,
-                    Host = host,
-                    Holding = holding,
-                    HoldingText = string.IsNullOrEmpty(holding) ? "未持有耳机" : "持有 " + holding,
-                    ActionText = string.IsNullOrEmpty(holding) ? "无法接管" : "点按接管音频",
-                };
-            }
-            Peers.ItemsSource = map.Values.ToList();
-        }
-        catch (Exception ex)
+                Id = p.Id,
+                Host = p.Host,
+                Holding = p.Holding,
+                HoldingText = string.IsNullOrEmpty(p.Holding) ? "未持有耳机" : "持有 " + p.Holding,
+                ActionText = string.IsNullOrEmpty(p.Holding) ? "无法接管" : "点按接管音频",
+            })
+            .ToList();
+        var key = string.Join("|", next.Select(p => p.Id + "\t" + p.Host + "\t" + p.Holding));
+        if (key == _peerKey)
         {
-            SessionState.SetHint(ex.Message);
+            return;
         }
+        _peerKey = key;
+        Peers.ItemsSource = next;
     }
 
     private async void OnPeerClick(object sender, ItemClickEventArgs e)

@@ -17,6 +17,7 @@ object SessionUi {
     var hint by mutableStateOf("扫描已配对的耳机, 点卡片连接.")
     var groupJoined by mutableStateOf(false)
     var holding by mutableStateOf<String?>(null)
+    var peers by mutableStateOf(listOf<GroupPeer>())
     var noise by mutableStateOf<String?>(null)
     var ambientVolume by mutableIntStateOf(0)
     var effect by mutableStateOf<String?>(null)
@@ -145,6 +146,19 @@ object SessionUi {
             }
         }
     }
+}
+
+data class GroupPeer(val id: String, val host: String, val holding: String?)
+
+fun sameMac(a: String?, b: String?): Boolean {
+    if (a.isNullOrBlank() || b.isNullOrBlank()) {
+        return false
+    }
+    return a.filter { it.isLetterOrDigit() }.equals(b.filter { it.isLetterOrDigit() }, ignoreCase = true)
+}
+
+fun holderOf(address: String, peers: List<GroupPeer> = SessionUi.peers): GroupPeer? {
+    return peers.firstOrNull { sameMac(it.holding, address) }
 }
 
 fun noiseLabel(mode: String?): String = when (mode) {

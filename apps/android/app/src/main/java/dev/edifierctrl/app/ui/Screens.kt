@@ -1,6 +1,5 @@
 package dev.edifierctrl.app.ui
 
-import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -41,7 +40,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
 
 @Composable
 fun StatusBanner() {
@@ -68,15 +66,35 @@ fun StatusBanner() {
 
 @Composable
 fun DeviceScreen() {
-    var devices by remember { mutableStateOf(listOf<DeviceRow>()) }
+    var scanned by remember { mutableStateOf(listOf<DeviceRow>()) }
     var kind by remember { mutableStateOf("rfcomm") }
     var scanning by remember { mutableStateOf(false) }
     val session = remember { EdifierNative.ensureSession() }
     val scope = rememberCoroutineScope()
+    val devices = decorateDevices(scanned)
+    fun scanNow() {
+        scanning = true
+        scope.launch {
+            val json = withContext(Dispatchers.IO) {
+                nativeCall { EdifierNative.sessionScan(session, kind) }
+            }
+            scanned = parseDevices(json)
+            val listed = decorateDevices(scanned)
+            SessionUi.hint = if (listed.isEmpty()) {
+                "没有发现漫步者耳机. 请先在系统蓝牙里配对."
+            } else {
+                "找到 ${listed.size} 台."
+            }
+            scanning = false
+        }
+    }
+    LaunchedEffect(kind) {
+        scanNow()
+    }
     Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 12.dp)) {
         Text("设备", style = MaterialTheme.typography.headlineSmall)
         Text(
-            "只列出系统里已经配对的耳机. 点卡片会连控制通道和系统音频.",
+            "只列出已配对的漫步者耳机. 系统已连上时会自动接管控制通道, 被其他主机占用时可点卡片请求接管.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
@@ -98,17 +116,7 @@ fun DeviceScreen() {
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
-                onClick = {
-                    scanning = true
-                    val json = nativeCall { EdifierNative.sessionScan(session, kind) }
-                    devices = parseDevices(json)
-                    SessionUi.hint = if (devices.isEmpty()) {
-                        "没有发现设备. 请先在系统蓝牙里配对."
-                    } else {
-                        "找到 ${devices.size} 台, 点卡片连接."
-                    }
-                    scanning = false
-                },
+                onClick = { scanNow() },
             ) {
                 Text(if (scanning) "扫描中" else "扫描")
             }
@@ -132,6 +140,18 @@ fun DeviceScreen() {
                     modifier = Modifier.fillMaxWidth(),
                     onClick = {
                         val name = row.name.ifBlank { row.address }
+                        val holderId = row.holderId
+                        if (holderId != null) {
+                            SessionUi.hint = nativeCall {
+                                val rc = EdifierNative.sessionGroupClaimPeer(session, holderId)
+                                if (rc != 0) {
+                                    EdifierNative.lastError()
+                                } else {
+                                    "已向 ${row.holderHost ?: holderId} 请求接管"
+                                }
+                            }
+                            return@Card
+                        }
                         SessionUi.hint = "正在连接 $name"
                         scope.launch {
                             val result = withContext(Dispatchers.IO) {
@@ -165,7 +185,7 @@ fun DeviceScreen() {
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Text(
-                            "点按连接",
+                            row.action,
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.padding(top = 6.dp),
@@ -180,22 +200,15 @@ fun DeviceScreen() {
 @Composable
 fun GroupScreen() {
     val context = LocalContext.current
-    val prefs = remember { context.getSharedPreferences("edifierctrl", Context.MODE_PRIVATE) }
-    var pass by remember { mutableStateOf(prefs.getString("passphrase", "") ?: "") }
+    var pass by remember { mutableStateOf(savedPassphrase(context)) }
     var advanced by remember { mutableStateOf(false) }
     var mac by remember { mutableStateOf("") }
-    var peers by remember { mutableStateOf(listOf<PeerRow>()) }
     val session = remember { EdifierNative.ensureSession() }
-    LaunchedEffect(SessionUi.groupJoined) {
-        while (SessionUi.groupJoined) {
-            peers = loadPeers(session)
-            delay(2000)
-        }
-    }
+    val peers = SessionUi.peers
     Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 12.dp)) {
         Text("组", style = MaterialTheme.typography.headlineSmall)
         Text(
-            "同一局域网中使用相同组名的电脑和手机会互相发现. 点成员即可接管它正在用的耳机.",
+            "同一局域网中使用相同组名的电脑和手机会互相发现. 启动后会自动加入上次的组. 点成员即可接管它正在用的耳机.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
@@ -213,21 +226,11 @@ fun GroupScreen() {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Button(
                 onClick = {
-                    SessionUi.hint = nativeCall {
-                        val rc = EdifierNative.sessionGroupJoin(session, pass)
-                        if (rc != 0) {
-                            EdifierNative.lastError()
-                        } else {
-                            prefs.edit().putString("passphrase", pass).apply()
-                            SessionUi.groupJoined = true
-                            SessionUi.holding = EdifierNative.sessionHolding(session)
-                            "已加入组"
-                        }
-                    }
-                    peers = loadPeers(session)
+                    savePassphrase(context, pass)
+                    SessionUi.hint = joinGroup(session, pass)
                 },
             ) { Text(if (SessionUi.groupJoined) "已加入" else "加入") }
-            OutlinedButton(onClick = { peers = loadPeers(session) }) { Text("刷新") }
+            OutlinedButton(onClick = { SessionUi.peers = loadPeers(session) }) { Text("刷新") }
         }
         Spacer(Modifier.height(12.dp))
         if (peers.isEmpty()) {
@@ -331,29 +334,27 @@ fun DebugScreen() {
     }
 }
 
-private data class DeviceRow(val address: String, val name: String)
-
-private data class PeerRow(val id: String, val host: String, val holding: String?)
-
-private fun parseDevices(json: String): List<DeviceRow> {
-    return runCatching {
-        val arr = JSONArray(json)
-        (0 until arr.length()).map { i ->
-            val o = arr.getJSONObject(i)
-            DeviceRow(o.optString("address"), o.optString("name"))
-        }
-    }.getOrDefault(emptyList())
-}
-
 @Composable
 fun EventPump() {
+    val context = LocalContext.current
     val session = remember { EdifierNative.ensureSession() }
     LaunchedEffect(session) {
         if (session == 0L || !EdifierNative.loaded) {
             return@LaunchedEffect
         }
+        val pass = savedPassphrase(context)
+        if (pass.isNotBlank() && !SessionUi.groupJoined) {
+            val msg = withContext(Dispatchers.IO) { joinGroup(session, pass) }
+            SessionUi.hint = if (SessionUi.groupJoined) "已自动加入组" else msg
+        }
+        withContext(Dispatchers.IO) { autoConnectLinked(session) }
+        var n = 0
         while (true) {
             delay(250)
+            n += 1
+            if (SessionUi.groupJoined && n % 8 == 0) {
+                SessionUi.peers = withContext(Dispatchers.IO) { loadPeers(session) }
+            }
             val ev = runCatching { EdifierNative.sessionPollEvent(session) }.getOrNull() ?: continue
             if (ev.contains("\"empty\"")) {
                 continue
@@ -363,18 +364,47 @@ fun EventPump() {
     }
 }
 
-private fun loadPeers(session: Long): List<PeerRow> {
-    val json = nativeCall { EdifierNative.sessionGroupPeers(session) }
-    return runCatching {
-        val arr = JSONArray(json)
-        val map = linkedMapOf<String, PeerRow>()
-        for (i in 0 until arr.length()) {
-            val o = arr.getJSONObject(i)
-            val id = o.optString("id")
-            val host = o.optString("hostname").ifBlank { id }
-            val holding = if (o.isNull("holding")) null else o.optString("holding").ifBlank { null }
-            map[id] = PeerRow(id, host, holding)
+private data class ListedDevice(
+    val address: String,
+    val name: String,
+    val holderId: String?,
+    val holderHost: String?,
+    val action: String,
+)
+
+private fun decorateDevices(scanned: List<DeviceRow>): List<ListedDevice> {
+    val peers = SessionUi.peers
+    val local = SessionUi.holding
+    val map = linkedMapOf<String, ListedDevice>()
+    fun key(addr: String) = addr.filter { it.isLetterOrDigit() }.uppercase()
+    for (row in scanned) {
+        val holder = holderOf(row.address, peers)
+        val self = sameMac(local, row.address)
+        val occupied = holder != null && !self
+        map[key(row.address)] = ListedDevice(
+            address = row.address,
+            name = row.name,
+            holderId = if (occupied) holder?.id else null,
+            holderHost = if (occupied) holder?.host else null,
+            action = when {
+                occupied -> "被 ${holder?.host} 占用 · 点按接管"
+                self -> "本机持有 · 点按连接"
+                else -> "点按连接"
+            },
+        )
+    }
+    for (peer in peers) {
+        val mac = peer.holding ?: continue
+        if (sameMac(local, mac) || map.containsKey(key(mac))) {
+            continue
         }
-        map.values.toList()
-    }.getOrDefault(emptyList())
+        map[key(mac)] = ListedDevice(
+            address = mac,
+            name = "占用中的耳机",
+            holderId = peer.id,
+            holderHost = peer.host,
+            action = "被 ${peer.host} 占用 · 点按接管",
+        )
+    }
+    return map.values.toList()
 }

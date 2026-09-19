@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Windows.Storage;
 
 namespace EdifierCtrl.Native;
 
@@ -16,6 +17,7 @@ internal static class SessionState
     public static string Hint { get; private set; } = "扫描已配对的耳机, 点列表连接.";
     public static bool GroupJoined { get; set; }
     public static string? Holding { get; set; }
+    public static IReadOnlyList<GroupPeer> Peers { get; private set; } = [];
     public static string? Noise { get; set; }
     public static string? Mac { get; private set; }
     public static string? Firmware { get; private set; }
@@ -215,6 +217,109 @@ internal static class SessionState
         _ => Hint,
     };
 
+    public static void TryAutoJoin()
+    {
+        if (GroupJoined)
+        {
+            return;
+        }
+        try
+        {
+            var saved = ApplicationData.Current.LocalSettings.Values["passphrase"] as string;
+            if (string.IsNullOrWhiteSpace(saved))
+            {
+                return;
+            }
+            EdifierNative.EnsureSession();
+            EdifierNative.GroupJoin(saved);
+            GroupJoined = true;
+            Holding = EdifierNative.Holding();
+            RefreshPeers();
+            SetHint("已自动加入组");
+        }
+        catch (Exception ex)
+        {
+            SetHint(ex.Message);
+        }
+    }
+
+    public static void RefreshPeers()
+    {
+        if (!GroupJoined)
+        {
+            return;
+        }
+        try
+        {
+            var map = new Dictionary<string, GroupPeer>(StringComparer.Ordinal);
+            using var doc = JsonDocument.Parse(EdifierNative.GroupPeers());
+            foreach (var item in doc.RootElement.EnumerateArray())
+            {
+                var id = item.GetProperty("id").GetString() ?? "";
+                var host = item.TryGetProperty("hostname", out var h) ? h.GetString() ?? id : id;
+                if (string.IsNullOrWhiteSpace(host))
+                {
+                    host = id;
+                }
+                var holding = item.TryGetProperty("holding", out var hold) && hold.ValueKind == JsonValueKind.String
+                    ? hold.GetString()
+                    : null;
+                map[id] = new GroupPeer(id, host, string.IsNullOrEmpty(holding) ? null : holding);
+            }
+            var next = map.Values.OrderBy(p => p.Id, StringComparer.Ordinal).ToList();
+            if (PeersEqual(Peers, next))
+            {
+                return;
+            }
+            Peers = next;
+            Raise();
+        }
+        catch
+        {
+            // 组员列表暂时失败时保持上一份.
+        }
+    }
+
+    public static bool SameMac(string? a, string? b)
+    {
+        if (string.IsNullOrWhiteSpace(a) || string.IsNullOrWhiteSpace(b))
+        {
+            return false;
+        }
+        static string Norm(string s) => new string(s.Where(char.IsLetterOrDigit).ToArray());
+        return string.Equals(Norm(a), Norm(b), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool PeersEqual(IReadOnlyList<GroupPeer> a, IReadOnlyList<GroupPeer> b)
+    {
+        if (a.Count != b.Count)
+        {
+            return false;
+        }
+        for (var i = 0; i < a.Count; i++)
+        {
+            if (a[i].Id != b[i].Id || a[i].Host != b[i].Host || a[i].Holding != b[i].Holding)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public static GroupPeer? HolderOf(string address)
+    {
+        return Peers.FirstOrDefault(p => SameMac(p.Holding, address));
+    }
+
+    public static bool IsEdifierName(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return false;
+        }
+        return name.Contains("EDIFIER", StringComparison.OrdinalIgnoreCase) || name.Contains("漫步者");
+    }
+
     public static string NoiseLabel(string? mode) => mode switch
     {
         "normal" => "关闭",
@@ -225,3 +330,5 @@ internal static class SessionState
 
     private static void Raise() => Changed?.Invoke();
 }
+
+internal sealed record GroupPeer(string Id, string Host, string? Holding);

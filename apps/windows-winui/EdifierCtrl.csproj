@@ -7,16 +7,18 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <Platforms>x64;ARM64</Platforms>
     <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+    <RollForward>LatestMajor</RollForward>
     <UseWinUI>true</UseWinUI>
     <WindowsPackageType>None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <WindowsAppSdkBootstrapInitialize>false</WindowsAppSdkBootstrapInitialize>
     <EnableMsixTooling>false</EnableMsixTooling>
     <EnableCoreMrtTooling>false</EnableCoreMrtTooling>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250108002" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250108002" GeneratePathProperty="true" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" />
   </ItemGroup>
   <Target Name="CopyFfi" AfterTargets="Build">
@@ -25,5 +27,12 @@
       DestinationFolder="$(OutDir)"
       SkipUnchangedFiles="true"
       Condition="Exists('$(MSBuildThisFileDirectory)..\..\target\debug\edifier_ffi.dll')" />
+  </Target>
+  <Target Name="CopyWinUiResourcesPri" AfterTargets="Build">
+    <Copy
+      SourceFiles="$(OutDir)Microsoft.UI.Xaml.Controls.pri"
+      DestinationFiles="$(OutDir)resources.pri"
+      SkipUnchangedFiles="true"
+      Condition="Exists('$(OutDir)Microsoft.UI.Xaml.Controls.pri')" />
   </Target>
 </Project>
