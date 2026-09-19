@@ -7,26 +7,16 @@ pub(super) enum EndpointState {
     Unknown,
 }
 
-pub(super) fn audio_state(
-    states: impl IntoIterator<Item = EndpointState>,
-    services_enabled: bool,
-) -> AudioState {
-    let mut found = false;
-    let mut uncertain = false;
+pub(super) fn audio_state(states: impl IntoIterator<Item = EndpointState>) -> AudioState {
     for state in states {
-        found = true;
         match state {
             EndpointState::Active => return AudioState::Connected,
-            EndpointState::Disconnected => {}
-            EndpointState::Unknown => uncertain = true,
+            EndpointState::Disconnected | EndpointState::Unknown => {}
         }
     }
-    // 服务移除可能让端点完全消失, 此时需要系统服务枚举的独立负证据.
-    if (found && !uncertain) || !services_enabled {
-        AudioState::Disconnected
-    } else {
-        AudioState::Unknown
-    }
+    // 端点消失或未激活只能说明本机音频可能空闲, 不能证明系统蓝牙已断开.
+    // 释放由 ACL 断开确认, 见 state.rs.
+    AudioState::Unknown
 }
 
 #[cfg(test)]
@@ -34,35 +24,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn missing_or_disabled_endpoint_cannot_confirm_release_with_services_enabled() {
-        assert_eq!(audio_state([], true), AudioState::Unknown);
-        assert_eq!(audio_state([EndpointState::Unknown], true), AudioState::Unknown);
+    fn missing_or_unplugged_endpoints_cannot_confirm_release() {
+        assert_eq!(audio_state([]), AudioState::Unknown);
+        assert_eq!(audio_state([EndpointState::Unknown]), AudioState::Unknown);
+        assert_eq!(audio_state([EndpointState::Disconnected]), AudioState::Unknown);
         assert_eq!(
-            audio_state([EndpointState::Disconnected, EndpointState::Unknown], true),
+            audio_state([EndpointState::Disconnected, EndpointState::Unknown]),
             AudioState::Unknown
         );
     }
 
     #[test]
     fn any_active_endpoint_keeps_audio_connected() {
-        for services_enabled in [false, true] {
-            assert_eq!(
-                audio_state([EndpointState::Disconnected, EndpointState::Active], services_enabled),
-                AudioState::Connected
-            );
-        }
-    }
-
-    #[test]
-    fn all_observed_endpoints_must_be_disconnected() {
         assert_eq!(
-            audio_state([EndpointState::Disconnected, EndpointState::Disconnected], true),
-            AudioState::Disconnected
+            audio_state([EndpointState::Disconnected, EndpointState::Active]),
+            AudioState::Connected
         );
-    }
-
-    #[test]
-    fn removed_services_confirm_release_when_endpoints_disappear() {
-        assert_eq!(audio_state([], false), AudioState::Disconnected);
     }
 }

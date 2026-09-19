@@ -15,14 +15,13 @@ use crate::{a2dp, com::{parse_addr, win_err}};
 use super::observed::{self, EndpointState};
 
 pub(super) fn audio_state(address: &str) -> Result<AudioState, TransportError> {
-    // ACL 断开可以排除音频连接, ACL 连接本身不能证明音频已连接.
+    // ACL 断开可以排除音频连接. ACL 仍在时, 关掉服务或端点消失都不能确认释放.
     if !a2dp::acl_connected(address)? {
         return Ok(AudioState::Disconnected);
     }
-    let services_enabled = !a2dp::enabled_audio_services(address)?.is_empty();
     let containers = device_containers(address)?;
     if containers.is_empty() {
-        return Ok(observed::audio_state([], services_enabled));
+        return Ok(observed::audio_state([]));
     }
     let enumerator: IMMDeviceEnumerator = unsafe {
         CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
@@ -53,7 +52,7 @@ pub(super) fn audio_state(address: &str) -> Result<AudioState, TransportError> {
             EndpointState::Unknown
         });
     }
-    Ok(observed::audio_state(states, services_enabled))
+    Ok(observed::audio_state(states))
 }
 
 fn device_containers(address: &str) -> Result<Vec<GUID>, TransportError> {

@@ -5,7 +5,7 @@
 传输实现:
 
 - `edifier-runtime::MockTransport` 测试用
-- `edifier-bt-windows` WinRT RFCOMM / BLE, 音频服务开关与 MMDevice 实际音频端点校验
+- `edifier-bt-windows` WinRT RFCOMM / BLE, 音频服务开关抑制重连, 释放时断开 ACL, MMDevice 端点只用于确认占用
 - `edifier-bt-linux` BlueZ RFCOMM (仅 Linux 编译真实实现)
 - `edifier-bt-android` JNI 调 `BluetoothBridge`: 已配对 RFCOMM, A2DP 用隐藏 connect (Android 14 可能失败, 交接回退 CD)
 - `edifier-bt-macos` dlsym Swift `@_cdecl` IOBluetooth 桥, CoreAudio 确认蓝牙输出端点, 显式接管时选择默认输出. 详见 [macOS 桌面端](macos.md).
@@ -13,7 +13,7 @@
 
 Windows 优先 RFCOMM. BLE 随机 MAC 时 `FromBluetoothAddressAsync` 可能失败, 需要本机已用经典蓝牙配对.
 
-`suppress_autoreconnect` 在各系统上受公开 API 限制. Windows 记录并恢复本次修改前的音频服务状态, Linux 和 macOS 不能保证独立抑制系统重连. 交接必须确认实际释放, 无法确认时中止并报告失败. CD 回退只作用于地址匹配的控制通道, 不跨耳机发送.
+`suppress_autoreconnect` 在各系统上受公开 API 限制. Windows 记录并恢复本次修改前的音频服务状态, 释放时在关闭服务后请求断开 ACL, 仅当系统报告设备已断开才确认释放. Linux 和 macOS 不能保证独立抑制系统重连. 交接必须确认实际释放, 无法确认时中止并报告失败. CD 回退只作用于地址匹配的控制通道, 不跨耳机发送.
 
 释放音频时先请求系统断开并等待状态更新, 再按需尝试 CD. 系统断开可能同时关闭控制通道, 所以 CD 写入失败后仍会在原请求期限内核验音频状态, 只有确认 `Disconnected` 才回复已释放. macOS 系统释放请求失败时保留仍可用的控制通道供 CD 回退.
 

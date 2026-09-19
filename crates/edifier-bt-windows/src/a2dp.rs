@@ -1,5 +1,7 @@
-//! 通过公开 Win32 API 开关远端音频服务, 服务启用不代表音频已连接.
+//! 通过公开 Win32 API 开关远端音频服务, 释放时再请求断开 ACL.
+//! 服务启用不代表音频已连接, 关掉服务也不代表系统蓝牙已断开.
 
+use std::ffi::c_void;
 use std::mem::size_of;
 
 use edifier_runtime::TransportError;
@@ -12,6 +14,7 @@ use windows::Win32::Devices::Bluetooth::{
     BLUETOOTH_FIND_RADIO_PARAMS, BLUETOOTH_SERVICE_DISABLE, BLUETOOTH_SERVICE_ENABLE,
 };
 use windows::Win32::Foundation::{CloseHandle, BOOL, HANDLE, TRUE};
+use windows::Win32::System::IO::DeviceIoControl;
 
 use crate::audio::services::{AudioService, ServiceControl};
 use crate::com::parse_addr;
@@ -26,6 +29,9 @@ const AUDIO_SERVICES: [(AudioService, GUID); 3] = [
     (AudioService::Handsfree, HANDSFREE),
     (AudioService::Headset, HEADSET),
 ];
+
+/// WDK bthioctl.h: CTL_CODE(FILE_DEVICE_BLUETOOTH, 0x03, METHOD_BUFFERED, FILE_ANY_ACCESS)
+const IOCTL_BTH_DISCONNECT_DEVICE: u32 = 0x0041_000C;
 
 pub struct Win32Services;
 
@@ -94,6 +100,49 @@ pub fn acl_connected(address: &str) -> Result<bool, TransportError> {
     with_radio(|radio| {
         let info = find_device(radio, addr)?;
         Ok(info.fConnected.as_bool())
+    })
+}
+
+pub fn disconnect_acl(address: &str) -> Result<(), TransportError> {
+    let addr = parse_addr(address)?;
+    with_radio(|radio| {
+        let info = find_device(radio, addr)?;
+        if !info.fConnected.as_bool() {
+            return Ok(());
+        }
+        let bt_addr = unsafe { info.Address.Anonymous.ullLong };
+        let mut returned = 0u32;
+        let result = unsafe {
+            DeviceIoControl(
+                radio,
+                IOCTL_BTH_DISCONNECT_DEVICE,
+                Some((&bt_addr as *const u64).cast::<c_void>()),
+                size_of::<u64>() as u32,
+                None,
+                0,
+                Some(&mut returned as *mut u32),
+                None,
+            )
+        };
+        match result {
+            Ok(()) => {
+                info!(target: "edifier_bt_windows", address, "已请求断开蓝牙 ACL");
+                Ok(())
+            }
+            Err(err) => {
+                let still = find_device(radio, addr)
+                    .map(|info| info.fConnected.as_bool())
+                    .unwrap_or(true);
+                if still {
+                    warn!(target: "edifier_bt_windows", address, %err, "请求断开蓝牙 ACL 失败");
+                    Err(TransportError::Connect(format!(
+                        "IOCTL_BTH_DISCONNECT_DEVICE: {err}"
+                    )))
+                } else {
+                    Ok(())
+                }
+            }
+        }
     })
 }
 
