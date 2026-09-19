@@ -18,6 +18,15 @@ const char *edifier_version(void);
 const char *edifier_last_error(void);
 void edifier_string_free(char *s);
 
+/* 进程级原生日志, 在创建会话前注册. 首次成功注册的回调保留至进程退出.
+ * 回调支持并发调用, 不抛异常, 不卸载其代码. 字符串仅在回调期间有效.
+ * level: 1=error, 2=warn, 3=info, 4=debug, 5=trace. flush!=0 时须同步刷盘.
+ * 两个函数成功返回 0, 失败返回 -1 并设置 edifier_last_error.
+ */
+typedef void (*EdifierLogCallback)(int level, const char *target, const char *message, int flush);
+int edifier_log_install(EdifierLogCallback callback);
+int edifier_log_set_level(int level);
+
 char *edifier_command_encode(const char *command_json);
 char *edifier_frame_parse(const char *frame_hex);
 char *edifier_profiles_json(void);

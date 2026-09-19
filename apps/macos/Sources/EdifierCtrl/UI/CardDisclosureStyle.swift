@@ -2,11 +2,13 @@ import SwiftUI
 
 /// 折叠卡片的标题和留白共用一个按钮, 展开内容保持独立交互.
 struct CardDisclosureStyle: DisclosureGroupStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func makeBody(configuration: Configuration) -> some View {
         Surface(padding: 0) {
             VStack(alignment: .leading, spacing: 0) {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.16)) {
+                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.16)) {
                         configuration.isExpanded.toggle()
                     }
                 } label: {
@@ -22,7 +24,7 @@ struct CardDisclosureStyle: DisclosureGroupStyle {
                     .padding(22)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(QuietButtonStyle(cornerRadius: 20))
                 .accessibilityValue(configuration.isExpanded ? "已展开" : "已折叠")
                 if configuration.isExpanded {
                     configuration.content

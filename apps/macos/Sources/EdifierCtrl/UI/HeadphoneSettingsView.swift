@@ -73,9 +73,8 @@ struct HeadphoneSettingsView: View {
             }
             .frame(maxWidth: .infinity).padding(.vertical, 18)
             .foregroundStyle(model.state.effect == value ? Palette.accent : Color.secondary)
-            .background(model.state.effect == value ? Palette.accent.opacity(0.09) : Palette.canvas, in: RoundedRectangle(cornerRadius: 12))
-            .contentShape(RoundedRectangle(cornerRadius: 12))
-        }.buttonStyle(.plain).accessibilityValue(model.state.effect == value ? "已选中" : "未选中")
+        }.buttonStyle(ChoiceButtonStyle(selected: model.state.effect == value, cornerRadius: 12))
+            .accessibilityValue(model.state.effect == value ? "已选中" : "未选中")
     }
 
     private func settingToggle(_ title: String, detail: String, value: Bool?, action: @escaping (Bool) -> Void) -> some View {

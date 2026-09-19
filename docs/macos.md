@@ -19,7 +19,7 @@ just macos run
 just macos debug
 ```
 
-数据保存在 `target/edifierctrl-debug/`, 不影响日常实例. `EDIFIER_DATA_DIR` 和 `EDIFIER_LOG_FILE` 可分别指定数据目录和日志文件, `EDIFIER_LOG_LEVEL=debug` 启用详细日志.
+数据保存在 `target/edifierctrl-debug/`, 不影响日常实例. `EDIFIER_DATA_DIR` 和 `EDIFIER_LOG_FILE` 可分别指定数据目录和日志文件. `EDIFIER_LOG_LEVEL=debug` 启用详细日志, `trace` 启用最详细日志, `just macos debug` 默认使用 `trace`. Swift 界面与 Rust 核心日志写入同一文件, 保留级别和来源; Rust panic 会同步刷盘后继续执行原有 panic 处理.
 
 ## 连接与控制
 
@@ -46,7 +46,8 @@ macOS 使用 IOBluetooth 建立经典蓝牙控制通道, 以 CoreAudio 的实际
 
 - 菜单栏图标左键显示并聚焦唯一主窗口, 右键打开快捷菜单.
 - 关闭窗口隐藏应用并继续服务, 可设置 Dock 图标是否跟随隐藏.
-- 可设置启动时隐藏主窗口. 窗口记忆普通尺寸及缩放状态, 不恢复位置或全屏.
+- 可设置启动时隐藏主窗口, 首次唤起才创建窗口. 窗口记忆普通尺寸及缩放状态, 不恢复位置或全屏.
+- 主窗口使用透明标题栏并保留原生红黄绿按钮, 全屏顶部栏由系统管理. 按钮提供完整点击区域及悬停, 按下, 焦点反馈, 动画遵循系统减少动态效果设置.
 - 同一数据目录只运行一个实例; 再次启动唤起已有窗口. 调试实例可与日常实例并行.
 - 完全退出使用应用菜单, 菜单栏右键菜单或 `Cmd+Q`.
 

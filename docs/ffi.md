@@ -9,6 +9,12 @@
 返回的 `char*` 是 UTF-8, 调用方必须 `edifier_string_free`.
 失败返回 `NULL`, 随后 `edifier_last_error` 给出原因 (线程局部, 不要 free).
 
+## 宿主日志
+
+原生宿主可在创建会话前调用 `edifier_log_install` 注册进程级日志回调, `edifier_log_set_level` 动态设置缺省级别 (1=error, 2=warn, 3=info, 4=debug, 5=trace). `RUST_LOG` 的显式指令仍可细化各 target 的过滤. 成功返回 0, 失败返回 -1 并设置 `edifier_last_error`.
+
+首次成功注册的回调保留至进程退出, 宿主不得提前卸载回调或 Rust 库. 回调可由工作线程并发执行, 不得抛异常, 须在返回前复制 UTF-8 target 和 message. 宿主负责时间戳, 日志轮转和终端输出; panic 回调的 `flush` 非零, 必须在返回前同步刷盘. macOS 已接入 `AppLog`, 详细日志开关同时控制核心日志.
+
 ## 命令 JSON
 
 `edifier_command_encode` 入参带 `op` 字段, 例如:

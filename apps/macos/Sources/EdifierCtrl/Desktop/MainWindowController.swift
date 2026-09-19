@@ -18,12 +18,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         normalSize = NSSize(width: preferences.windowWidth, height: preferences.windowHeight)
         let window = MainWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1120, height: 780),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         super.init(window: window)
         window.title = "EdifierCtrl"
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.titlebarSeparatorStyle = .none
+        // 保留 AppKit 原生标题栏拖动区域及窗口按钮, 全屏时由系统自动隐藏和布局.
+        // 分栏背景延伸到顶边, 左侧内容按 safe area 避开原生按钮, 不用全窗背景拖动抢占控件事件.
+        window.isMovableByWindowBackground = false
         window.identifier = NSUserInterfaceItemIdentifier("EdifierCtrl.main")
         window.isReleasedWhenClosed = false
         window.isRestorable = false

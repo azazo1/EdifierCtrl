@@ -93,20 +93,6 @@ struct EmptyState: View {
     }
 }
 
-struct ActionStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var isEnabled
-    var prominent = false
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 13, weight: .semibold))
-            .padding(.horizontal, 16).padding(.vertical, 10)
-            .contentShape(RoundedRectangle(cornerRadius: 10))
-            .foregroundStyle(prominent ? Color.white : Palette.accent)
-            .background(prominent ? Palette.accent : Palette.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
-            .opacity(!isEnabled ? 0.4 : configuration.isPressed ? 0.75 : 1)
-    }
-}
-
 struct Metric: View {
     let label: String
     let value: String
@@ -143,11 +129,8 @@ struct ChoiceTile: View {
             }
             .foregroundStyle(selected ? Palette.accent : Color.primary)
             .padding(17).frame(maxWidth: .infinity, alignment: .leading)
-            .background(selected ? Palette.accent.opacity(0.09) : Palette.canvas.opacity(0.6), in: RoundedRectangle(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(selected ? Palette.accent.opacity(0.6) : Palette.border, lineWidth: 1))
-            .contentShape(RoundedRectangle(cornerRadius: 14))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ChoiceButtonStyle(selected: selected))
         .accessibilityLabel(title)
         .accessibilityValue(selected ? "已选中" : "未选中")
     }

@@ -7,9 +7,9 @@ struct RootView: View {
     @ObservedObject private var preferences = AppPreferences.shared
 
     var body: some View {
-        HStack(spacing: 0) {
+        WorkspaceLayout {
             sidebar
-            Divider()
+        } content: {
             VStack(spacing: 0) {
                 header
                 Divider().opacity(0.5)
@@ -31,7 +31,6 @@ struct RootView: View {
         }
         .tint(Palette.accent)
         .disclosureGroupStyle(CardDisclosureStyle())
-        .frame(minWidth: 900, minHeight: 650)
         .sheet(isPresented: $updates.isPresented) { UpdateView() }
     }
 
@@ -70,13 +69,12 @@ struct RootView: View {
                     .frame(maxWidth: .infinity, minHeight: 28)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain).foregroundStyle(updates.hasUpdate ? Palette.accent : Color.secondary)
+                .buttonStyle(QuietButtonStyle(cornerRadius: 6)).foregroundStyle(updates.hasUpdate ? Palette.accent : Color.secondary)
                 .help("版本与更新")
             }
             .padding(.horizontal, 24).padding(.bottom, 24)
         }
         .frame(width: 212)
-        .background(.ultraThinMaterial)
     }
 
     private func navigationItem(_ page: AppPage) -> some View {
@@ -92,10 +90,9 @@ struct RootView: View {
             }
             .foregroundStyle(model.page == page ? Palette.accent : Color.primary.opacity(0.72))
             .padding(.horizontal, 13).padding(.vertical, 13)
-            .background(model.page == page ? Palette.accent.opacity(0.10) : .clear, in: RoundedRectangle(cornerRadius: 10))
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain).padding(.horizontal, 12).padding(.vertical, 2)
+        .buttonStyle(QuietButtonStyle(selected: model.page == page)).padding(.horizontal, 12).padding(.vertical, 2)
         .accessibilityAddTraits(model.page == page ? .isSelected : [])
     }
 
@@ -126,7 +123,7 @@ struct RootView: View {
             }
             Spacer()
             Button { model.notice = nil } label: { Image(systemName: "xmark").font(.caption) }
-                .buttonStyle(.plain).help("关闭提示").accessibilityLabel("关闭提示")
+                .buttonStyle(IconButtonStyle(width: 30, height: 30, cornerRadius: 8)).help("关闭提示").accessibilityLabel("关闭提示")
         }
         .padding(16).background(.regularMaterial)
         .overlay(alignment: .top) { Divider() }

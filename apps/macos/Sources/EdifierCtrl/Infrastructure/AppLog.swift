@@ -20,6 +20,20 @@ enum AppLog {
 
     static func setVerbose(_ enabled: Bool) {
         writer.setVerbose(enabled)
+        NativeLogging.setLevel(writer.nativeLevel)
+    }
+
+    static func recordNative(level: Int32, target: String, message: String) {
+        let mapped: LogWriter.Level
+        switch level {
+        case 1: mapped = .error
+        case 2: mapped = .warning
+        case 4: mapped = .debug
+        case 5: mapped = .trace
+        default: mapped = .info
+        }
+        // Rust 已按缺省级别及 RUST_LOG 指令过滤, 此处保留 target 的显式覆盖.
+        writer.record(message, level: mapped, category: target, filtered: true)
     }
 
     static func flush() {
@@ -36,8 +50,10 @@ enum AppLog {
 
 private final class LogWriter: @unchecked Sendable {
     enum Level: String {
+        case trace = "TRACE"
         case debug = "DEBUG"
         case info = "INFO"
+        case warning = "WARN"
         case error = "ERROR"
     }
 
@@ -45,7 +61,7 @@ private final class LogWriter: @unchecked Sendable {
     private let queueKey = DispatchSpecificKey<Bool>()
     private let settingsLock = NSLock()
     private var verbose = false
-    private let forceVerbose = ["debug", "trace"].contains(ProcessInfo.processInfo.environment["EDIFIER_LOG_LEVEL"]?.lowercased() ?? "")
+    private let forcedLevel = ProcessInfo.processInfo.environment["EDIFIER_LOG_LEVEL"]?.lowercased()
     private let systemLog = Logger(subsystem: Bundle.main.bundleIdentifier ?? "EdifierCtrl", category: "application")
     private let diagnostics = Logger(subsystem: Bundle.main.bundleIdentifier ?? "EdifierCtrl", category: "log-storage")
     private var standardErrorFailed = false
@@ -74,15 +90,22 @@ private final class LogWriter: @unchecked Sendable {
         settingsLock.unlock()
     }
 
-    func record(_ message: String, level: Level, category: String) {
+    var nativeLevel: Int32 {
         settingsLock.lock()
-        let shouldWrite = level != .debug || verbose || forceVerbose
-        settingsLock.unlock()
-        guard shouldWrite else { return }
+        defer { settingsLock.unlock() }
+        if verbose || forcedLevel == "trace" { return 5 }
+        return forcedLevel == "debug" ? 4 : 3
+    }
+
+    func record(_ message: String, level: Level, category: String, filtered: Bool = false) {
+        let threshold = nativeLevel
+        let shouldWrite = level == .trace ? threshold >= 5 : level == .debug ? threshold >= 4 : true
+        guard filtered || shouldWrite else { return }
         let output = "[\(category)] \(message)"
         switch level {
-        case .debug: systemLog.debug("\(output, privacy: .public)")
+        case .trace, .debug: systemLog.debug("\(output, privacy: .public)")
         case .info: systemLog.info("\(output, privacy: .public)")
+        case .warning: systemLog.warning("\(output, privacy: .public)")
         case .error: systemLog.error("\(output, privacy: .public)")
         }
         let date = Date()

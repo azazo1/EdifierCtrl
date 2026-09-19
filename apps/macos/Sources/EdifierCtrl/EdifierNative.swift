@@ -25,6 +25,9 @@ final class EdifierNative: @unchecked Sendable {
     func prepare() async throws -> (String, [HeadphoneProfile]) {
         try await perform {
             try self.loadLibrary()
+            let installLog: NativeLogging.Install = try self.symbol("edifier_log_install")
+            let logLevel: NativeLogging.SetLevel = try self.symbol("edifier_log_set_level")
+            try NativeLogging.install(installLog, setLevel: logLevel)
             let version: @convention(c) () -> UnsafePointer<CChar>? = try self.symbol("edifier_version")
             let profiles: @convention(c) () -> UnsafeMutablePointer<CChar>? = try self.symbol("edifier_profiles_json")
             let create: @convention(c) (UnsafePointer<CChar>?) -> UnsafeMutableRawPointer? = try self.symbol("edifier_session_new")

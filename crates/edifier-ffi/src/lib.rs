@@ -5,6 +5,7 @@ mod action_json;
 mod command_json;
 mod cstr;
 mod event_json;
+mod logging;
 mod notify_json;
 #[cfg(not(test))]
 mod platform;
@@ -18,6 +19,7 @@ mod session;
 mod jni_bridge;
 
 pub use abi::*;
+pub use logging::{edifier_log_install, edifier_log_set_level, EdifierLogCallback};
 pub use session::*;
 
 #[cfg(test)]

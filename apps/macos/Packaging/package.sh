@@ -123,7 +123,7 @@ fi
 if [[ "$mode" == debug ]]; then
     export EDIFIER_DATA_DIR="$root/target/edifierctrl-debug"
     export EDIFIER_LOG_FILE="$EDIFIER_DATA_DIR/app.log"
-    export EDIFIER_LOG_LEVEL=debug
+    export EDIFIER_LOG_LEVEL=trace
     mkdir -p "$EDIFIER_DATA_DIR"
     "$final_app/Contents/MacOS/EdifierCtrl"
 elif [[ "$mode" == run ]]; then

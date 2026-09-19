@@ -159,10 +159,8 @@ struct HeadphonesView: View {
 
     private func playbackButton(_ action: String, symbol: String, label: String) -> some View {
         Button { model.send("playback", values: ["action": action], label: label) } label: {
-            Image(systemName: symbol).font(.system(size: 14)).frame(width: 40, height: 38)
-                .background(Palette.canvas, in: RoundedRectangle(cornerRadius: 10))
-                .contentShape(RoundedRectangle(cornerRadius: 10))
-        }.buttonStyle(.plain).help(label).accessibilityLabel(label)
+            Image(systemName: symbol).font(.system(size: 14))
+        }.buttonStyle(IconButtonStyle()).help(label).accessibilityLabel(label)
     }
 
     private var advancedControls: some View {
