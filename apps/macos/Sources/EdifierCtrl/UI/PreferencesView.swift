@@ -15,7 +15,7 @@ struct PreferencesView: View {
                     Divider()
                     preference("隐藏窗口时隐藏 Dock 图标", detail: "点击菜单栏图标可恢复主窗口", value: $preferences.hideDockWhenHidden)
                     Divider()
-                    preference("启动时自动加入交接组", detail: "需要先在交接页将组口令保存到数据目录", value: $preferences.autoJoinGroup)
+                    preference("启动时自动加入交接组", detail: "需要先在交接页记住组名", value: $preferences.autoJoinGroup)
                 }
             }
             Surface {
@@ -34,7 +34,7 @@ struct PreferencesView: View {
             Surface {
                 VStack(alignment: .leading, spacing: 20) {
                     SectionHeading(title: "连接诊断", detail: "遇到问题时, 查看活动记录或打开日志目录.")
-                    preference("详细日志", detail: "记录更多连接与生命周期细节, 不记录组口令", value: $preferences.verboseLogging)
+                    preference("详细日志", detail: "记录更多连接与生命周期细节", value: $preferences.verboseLogging)
                     HStack(spacing: 12) {
                         Button("活动与诊断") { model.page = .activity }.buttonStyle(ActionStyle())
                         Button("打开日志位置") { NSWorkspace.shared.activateFileViewerSelecting([AppPaths.logFile]) }

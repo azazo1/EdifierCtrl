@@ -79,7 +79,7 @@ final class AppModel: ObservableObject {
                         rememberGroup = true
                         if AppPreferences.shared.autoJoinGroup { joinGroup() }
                     }
-                } catch { report("无法读取已保存的组口令", error: error) }
+                } catch { report("无法读取已保存的组名", error: error) }
             } catch { report("耳机服务启动失败", error: error) }
         }
     }
@@ -182,27 +182,27 @@ final class AppModel: ObservableObject {
         do {
             groupSecret = try GroupSecret.load() ?? ""
             rememberGroup = !groupSecret.isEmpty
-        } catch { report("无法读取已保存的组口令", error: error) }
+        } catch { report("无法读取已保存的组名", error: error) }
     }
 
     func joinGroup() {
         guard !groupJoined else { return }
         let secret = groupSecret
         guard !secret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            notify("请先输入组口令", "在手机和电脑上使用完全相同的口令.", error: true)
+            notify("请先输入组名", "在手机和电脑上使用完全相同的组名.", error: true)
             return
         }
         run("正在加入交接组") {
             try await self.native.join(secret)
             self.groupJoined = true
-            self.notify("已加入交接组", "同一网络中使用相同口令的设备会自动出现在这里.")
+            self.notify("已加入交接组", "同一网络中使用相同组名的设备会自动出现在这里.")
             do {
                 if self.rememberGroup { try GroupSecret.save(secret) }
                 else {
                     try GroupSecret.delete()
                     AppPreferences.shared.autoJoinGroup = false
                 }
-            } catch { self.report("已入组, 但无法保存口令", error: error) }
+            } catch { self.report("已入组, 但无法保存组名", error: error) }
         }
     }
 
