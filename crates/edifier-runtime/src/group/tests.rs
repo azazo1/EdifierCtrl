@@ -27,6 +27,10 @@ struct TestAudio {
     suppressed: Mutex<HashSet<String>>,
     after_connect: AudioState,
     after_disconnect: AudioState,
+    disconnect_settles_after: Option<Duration>,
+    disconnect_call_delay: Duration,
+    disconnect_started: Mutex<Option<Instant>>,
+    control_closed: Arc<AtomicBool>,
     unknown_then: Option<AudioState>,
     unknown_reads: AtomicUsize,
     fail_connect: bool,
@@ -47,6 +51,10 @@ impl Default for TestAudio {
             suppressed: Mutex::new(HashSet::new()),
             after_connect: AudioState::Connected,
             after_disconnect: AudioState::Disconnected,
+            disconnect_settles_after: None,
+            disconnect_call_delay: Duration::ZERO,
+            disconnect_started: Mutex::new(None),
+            control_closed: Arc::new(AtomicBool::new(false)),
             unknown_then: None,
             unknown_reads: AtomicUsize::new(2),
             fail_connect: false,
@@ -64,7 +72,13 @@ impl Default for TestAudio {
 #[async_trait]
 impl AudioControl for TestAudio {
     async fn audio_state(&self, address: &str) -> Result<AudioState, TransportError> {
+        let started = *self.disconnect_started.lock().await;
         let mut states = self.states.lock().await;
+        if let (Some(started), Some(delay)) = (started, self.disconnect_settles_after) {
+            if started.elapsed() >= delay {
+                states.insert(address.into(), AudioState::Disconnected);
+            }
+        }
         let current = *states.get(address).unwrap_or(&AudioState::Disconnected);
         if current == AudioState::Unknown {
             if let Some(next) = self.unknown_then {
@@ -87,7 +101,10 @@ impl AudioControl for TestAudio {
 
     async fn disconnect_audio(&self, address: &str) -> Result<(), TransportError> {
         self.calls.lock().await.push(AudioCall::Disconnect(address.into()));
+        self.control_closed.store(true, Ordering::SeqCst);
+        *self.disconnect_started.lock().await = Some(Instant::now());
         self.states.lock().await.insert(address.into(), self.after_disconnect);
+        tokio::time::sleep(self.disconnect_call_delay).await;
         Ok(())
     }
 
@@ -154,6 +171,22 @@ impl CdFallback for FailingCd {
     }
 }
 
+struct ClosedControlCd {
+    closed: Arc<AtomicBool>,
+    calls: AtomicUsize,
+    delay: Duration,
+}
+
+#[async_trait]
+impl CdFallback for ClosedControlCd {
+    async fn send_headset_disconnect(&self) -> Result<(), TransportError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        assert!(self.closed.load(Ordering::SeqCst));
+        tokio::time::sleep(self.delay).await;
+        Err(TransportError::Connect("尚未连接".into()))
+    }
+}
+
 type Hub = GroupHub<TestNet, TestAudio>;
 
 fn hub(audio: TestAudio, cd: Option<Arc<dyn CdFallback>>) -> Hub {
@@ -161,10 +194,14 @@ fn hub(audio: TestAudio, cd: Option<Arc<dyn CdFallback>>) -> Hub {
 }
 
 fn request(mac: &str) -> GroupMessage {
+    request_with_budget(mac, HANDOFF_DEADLINE_MS)
+}
+
+fn request_with_budget(mac: &str, budget_ms: u64) -> GroupMessage {
     GroupMessage::HandoffRequest {
         headphone: mac.into(),
         nonce: nonce_to_hex([7; 16]),
-        deadline_ms: now_ms() + HANDOFF_DEADLINE_MS,
+        deadline_ms: now_ms() + budget_ms,
     }
 }
 
@@ -262,6 +299,101 @@ async fn requests_for_another_headset_do_not_release_or_send_cd() {
     assert!(hub.audio.calls.lock().await.is_empty());
     assert_eq!(cd.count(), 0);
     assert!(matches!(messages(&hub).await.as_slice(), [GroupMessage::HandoffNoAudio { .. }]));
+}
+
+#[tokio::test]
+async fn release_waits_for_system_disconnect_after_control_closes() {
+    for transient in [AudioState::Connected, AudioState::Unknown] {
+        let audio = TestAudio {
+            after_disconnect: transient,
+            disconnect_settles_after: Some(Duration::from_millis(150)),
+            ..TestAudio::default()
+        };
+        let cd = Arc::new(ClosedControlCd { closed: audio.control_closed.clone(), calls: AtomicUsize::new(0), delay: Duration::ZERO });
+        let hub = hub(audio, Some(cd.clone()));
+        seed_holder(&hub).await;
+        hub.set_control_address(Some(MAC.into())).await;
+        dispatch(&hub, "requester", request(MAC)).await;
+        let messages = messages(&hub).await;
+        assert!(messages.iter().any(|m| matches!(m, GroupMessage::HandoffReleased { .. })), "系统延迟释放不应中止: {messages:?}");
+        assert!(!messages.iter().any(|m| matches!(m, GroupMessage::HandoffAbort { .. })));
+        assert_eq!(cd.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(hub.holding().await, None);
+        assert!(!hub.audio.calls.lock().await.iter().any(|c| matches!(c, AudioCall::Connect(_))));
+    }
+}
+
+#[tokio::test]
+async fn release_still_succeeds_after_closed_control_cd_fails_or_times_out() {
+    for cd_delay in [Duration::ZERO, Duration::from_secs(10)] {
+        let audio = TestAudio {
+            after_disconnect: AudioState::Connected,
+            disconnect_settles_after: Some(Duration::from_millis(1400)),
+            ..TestAudio::default()
+        };
+        let cd = Arc::new(ClosedControlCd { closed: audio.control_closed.clone(), calls: AtomicUsize::new(0), delay: cd_delay });
+        let hub = hub(audio, Some(cd.clone()));
+        seed_holder(&hub).await;
+        hub.set_control_address(Some(MAC.into())).await;
+        timeout(Duration::from_secs(2), dispatch(&hub, "requester", request_with_budget(MAC, 2000))).await.unwrap();
+        assert_eq!(cd.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(hub.audio.audio_state(MAC).await.unwrap(), AudioState::Disconnected);
+        let messages = messages(&hub).await;
+        assert!(messages.iter().any(|m| matches!(m, GroupMessage::HandoffReleased { .. })));
+        assert!(!messages.iter().any(|m| matches!(m, GroupMessage::HandoffAbort { .. })));
+        assert!(!hub.audio.calls.lock().await.iter().any(|c| matches!(c, AudioCall::Connect(_))));
+    }
+}
+
+#[tokio::test]
+async fn release_uses_request_deadline_without_accepting_connected_or_unknown() {
+    for state in [AudioState::Connected, AudioState::Connecting, AudioState::Unknown] {
+        let audio = TestAudio { after_disconnect: state, ..TestAudio::default() };
+        let cd = Arc::new(ClosedControlCd { closed: audio.control_closed.clone(), calls: AtomicUsize::new(0), delay: Duration::ZERO });
+        let hub = hub(audio, Some(cd.clone()));
+        seed_holder(&hub).await;
+        hub.set_control_address(Some(MAC.into())).await;
+        let started = Instant::now();
+        timeout(Duration::from_millis(1200), dispatch(&hub, "requester", request_with_budget(MAC, 1200))).await.unwrap();
+        // CD 立即失败后仍应完成音频核验, 而不是把关闭控制通道直接视为交接失败或成功.
+        assert!(started.elapsed() >= Duration::from_millis(850));
+        assert_eq!(cd.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(hub.audio.audio_state(MAC).await.unwrap(), state);
+        assert_eq!(hub.machine.lock().await.phase(), Phase::Idle);
+        assert!(hub.audio.suppressed.lock().await.is_empty());
+        let messages = messages(&hub).await;
+        assert!(messages.iter().any(|m| matches!(m, GroupMessage::HandoffAbort { .. })));
+        assert!(!messages.iter().any(|m| matches!(m, GroupMessage::HandoffReleased { .. })));
+    }
+}
+
+#[tokio::test]
+async fn release_system_timeout_keeps_remaining_observation_budget() {
+    let hub = hub(TestAudio {
+        after_disconnect: AudioState::Connected,
+        disconnect_call_delay: Duration::from_secs(10),
+        disconnect_settles_after: Some(Duration::from_millis(3150)),
+        ..TestAudio::default()
+    }, None);
+    seed_holder(&hub).await;
+    timeout(Duration::from_secs(4), dispatch(&hub, "requester", request(MAC))).await.unwrap();
+    assert!(messages(&hub).await.iter().any(|m| matches!(m, GroupMessage::HandoffReleased { .. })));
+    assert_eq!(hub.audio.audio_state(MAC).await.unwrap(), AudioState::Disconnected);
+}
+
+#[tokio::test]
+async fn release_never_sends_cd_to_another_control_device() {
+    let cd = Arc::new(MockCd::new());
+    let hub = hub(TestAudio {
+        after_disconnect: AudioState::Connected,
+        disconnect_settles_after: Some(Duration::from_millis(1000)),
+        ..TestAudio::default()
+    }, Some(cd.clone()));
+    seed_holder(&hub).await;
+    hub.set_control_address(Some(OTHER.into())).await;
+    dispatch(&hub, "requester", request(MAC)).await;
+    assert_eq!(cd.count(), 0);
+    assert!(messages(&hub).await.iter().any(|m| matches!(m, GroupMessage::HandoffReleased { .. })));
 }
 
 #[tokio::test]

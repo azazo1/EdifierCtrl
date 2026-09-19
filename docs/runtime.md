@@ -15,6 +15,8 @@ Windows 优先 RFCOMM. BLE 随机 MAC 时 `FromBluetoothAddressAsync` 可能失�
 
 `suppress_autoreconnect` 在各系统上受公开 API 限制. Windows 记录并恢复本次修改前的音频服务状态, Linux 和 macOS 不能保证独立抑制系统重连. 交接必须确认实际释放, 无法确认时中止并报告失败. CD 回退只作用于地址匹配的控制通道, 不跨耳机发送.
 
+释放音频时先请求系统断开并等待状态更新, 再按需尝试 CD. 系统断开可能同时关闭控制通道, 所以 CD 写入失败后仍会在原请求期限内核验音频状态, 只有确认 `Disconnected` 才回复已释放. macOS 系统释放请求失败时保留仍可用的控制通道供 CD 回退.
+
 组成员使用本地心跳期限过滤离线设备. `group_leave` 停止发现与交接任务并恢复可恢复的重连抑制状态, 不主动中断用户正在使用的本机音频.
 
 局域网见 `docs/group.md`. `just listen <口令>` 听组员宣告. `--connect <MAC>` 认领 A2DP, `--claim-peer <id>` 向该成员请求接管.

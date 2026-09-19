@@ -1,7 +1,7 @@
 use std::collections::{HashSet, VecDeque};
 
 use edifier_protocol::AUDIO_CONNECT_GAP_MS;
-use tokio::time::{sleep, timeout};
+use tokio::time::{sleep, sleep_until, timeout, timeout_at};
 
 use super::*;
 
@@ -197,20 +197,81 @@ impl<N: GroupNet, A: AudioControl> GroupHub<N, A> {
         if self.peer.lock().await.holding.as_deref() != Some(&addr) {
             return Err(TransportError::Connect("释放目标与本机持有地址不一致".into()));
         }
-        match timeout(AUDIO_TIMEOUT, self.audio.disconnect_audio(&addr)).await {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => warn!(target: "edifier_runtime", %err, "系统断开音频失败"),
-            Err(_) => warn!(target: "edifier_runtime", "系统断开音频超时"),
+        let deadline_ms = match self.machine.lock().await.phase() {
+            Phase::Releasing { headphone, deadline_ms, .. } if headphone == mac => deadline_ms,
+            _ => return Err(TransportError::Connect("音频释放阶段或目标已失效".into())),
+        };
+        // 抑制重连等前置步骤已经消耗请求期限, 各阶段不能重新获得完整超时.
+        // 预留回复时间, 单调时钟保证本次释放不会因系统时钟调整延长.
+        let remaining = deadline_ms.saturating_sub(now_ms()).saturating_sub(250);
+        if remaining == 0 {
+            return Err(TransportError::Connect("音频释放仍待确认 (阶段: 系统断开前, 请求期限已耗尽)".into()));
         }
-        let state = timeout(AUDIO_TIMEOUT, self.audio.audio_state(&addr)).await;
-        if matches!(state, Ok(Ok(AudioState::Disconnected))) {
+        let deadline = Instant::now() + Duration::from_millis(remaining);
+        let mut context = Vec::new();
+        info!(target: "edifier_runtime", address = %addr, remaining_ms = remaining, "请求系统释放音频");
+        match timeout_at(deadline.min(Instant::now() + AUDIO_TIMEOUT), self.audio.disconnect_audio(&addr)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                warn!(target: "edifier_runtime", %err, "系统断开音频失败, 继续核验实际释放");
+                context.push(format!("系统断开: {err}"));
+            }
+            Err(_) => {
+                warn!(target: "edifier_runtime", "系统断开音频超时, 继续核验实际释放");
+                context.push("系统断开调用超时".into());
+            }
+        }
+        // 音频端点与控制通道的断开通知可能不同步, 先让系统状态收敛.
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let settle_deadline = Instant::now() + (remaining / 3).min(Duration::from_millis(750));
+        if self.wait_release_until(&addr, settle_deadline).await.is_ok() {
+            info!(target: "edifier_runtime", address = %addr, "已确认系统释放音频, 无需 CD 回退");
             return Ok(());
         }
-        if operation.can_control && operation.control_address == Some(mac) && self.cd.is_some() {
-            self.send_cd(operation, mac).await?;
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let mut stage = "系统断开后的状态确认";
+        if operation.can_control && operation.control_address == Some(mac) && self.cd.is_some()
+            && remaining > Duration::from_millis(100) {
+            stage = "CD 回退后的状态确认";
+            // CD 写入不能吃掉最终核验的时间. 控制通道已随系统断开时, 继续等音频状态.
+            let cd_deadline = deadline - (remaining / 2).min(Duration::from_millis(500));
+            let result = timeout_at(cd_deadline, self.send_cd_command(operation, mac)).await;
+            let error = match result {
+                Ok(Ok(())) => None,
+                Ok(Err(err)) => Some(err.to_string()),
+                Err(_) => Some("发送期限已耗尽".into()),
+            };
+            if let Some(err) = error {
+                warn!(target: "edifier_runtime", address = %addr, %err, "CD 回退未完成, 继续核验系统释放");
+                context.push(format!("CD 回退: {err}"));
+            }
         }
-        timeout(AUDIO_TIMEOUT, self.wait_audio(&addr, AudioState::Disconnected))
-            .await.map_err(|_| TransportError::Connect("确认音频释放超时".into()))?
+        match self.wait_release_until(&addr, deadline).await {
+            Ok(()) => {
+                info!(target: "edifier_runtime", address = %addr, stage, "已确认实际音频释放");
+                Ok(())
+            }
+            Err(last_state) => {
+                context.insert(0, last_state);
+                Err(TransportError::Connect(format!("音频释放仍待确认 (阶段: {stage}, {})", context.join("; "))))
+            }
+        }
+    }
+
+    async fn wait_release_until(&self, addr: &str, deadline: Instant) -> Result<(), String> {
+        let mut last_state = "未取得音频状态".to_owned();
+        while Instant::now() < deadline {
+            last_state = match timeout_at(deadline, self.audio.audio_state(addr)).await {
+                Ok(Ok(AudioState::Disconnected)) => return Ok(()),
+                Ok(Ok(AudioState::Connected)) => "音频仍连接".into(),
+                Ok(Ok(AudioState::Connecting)) => "音频仍在连接".into(),
+                Ok(Ok(AudioState::Unknown)) => "音频状态未知".into(),
+                Ok(Err(err)) => format!("读取音频状态失败: {err}"),
+                Err(_) => return Err(format!("读取音频状态超时; {last_state}")),
+            };
+            sleep_until(deadline.min(Instant::now() + Duration::from_millis(50))).await;
+        }
+        Err(last_state)
     }
 
     async fn wait_audio(&self, addr: &str, expected: AudioState) -> Result<(), TransportError> {
@@ -224,6 +285,13 @@ impl<N: GroupNet, A: AudioControl> GroupHub<N, A> {
     }
 
     async fn send_cd(&self, operation: &OperationState, mac: MacAddr) -> Result<(), TransportError> {
+        self.send_cd_command(operation, mac).await?;
+        // 请求接管侧从 CD 写入完成后计时, 再发起本机连接. 释放侧只核验真实断开.
+        sleep(Duration::from_millis(AUDIO_CONNECT_GAP_MS)).await;
+        Ok(())
+    }
+
+    async fn send_cd_command(&self, operation: &OperationState, mac: MacAddr) -> Result<(), TransportError> {
         if !operation.can_control || operation.control_address != Some(mac) {
             return Err(TransportError::Connect("控制通道不属于交接目标".into()));
         }
@@ -232,8 +300,6 @@ impl<N: GroupNet, A: AudioControl> GroupHub<N, A> {
         info!(target: "edifier_runtime", address = %mac.to_colon_string(), "发送 CD 释放音频");
         timeout(AUDIO_TIMEOUT, cd.send_headset_disconnect())
             .await.map_err(|_| TransportError::Write("发送 CD 超时".into()))??;
-        // 从 CD 调用完成后计时, 避免慢写入消耗掉状态机预留的重连间隔.
-        sleep(Duration::from_millis(AUDIO_CONNECT_GAP_MS)).await;
         Ok(())
     }
 }

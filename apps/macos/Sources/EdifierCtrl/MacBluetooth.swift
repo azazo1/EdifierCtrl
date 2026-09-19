@@ -191,13 +191,18 @@ public func edifier_macos_audio_disconnect(_ pointer: UnsafePointer<CChar>?) -> 
             guard let device = IOBluetoothDevice(addressString: address) else {
                 throw BluetoothFailure("无法创建蓝牙设备对象")
             }
-            // 公共 API 只能释放整条 ACL, 对应 RFCOMM 也必须立即结束.
-            if MacBluetooth.connection?.address == address {
+            // 系统请求失败时保留控制通道, 交接仍可用 CD 请求耳机主动释放.
+            // 成功断开的控制通道由系统 delegate 或此处确认断开后统一清理.
+            AppLog.info("请求系统释放耳机连接, 音频状态=\(CoreAudioBluetooth.state(address: address)).", category: "bluetooth")
+            let started = ProcessInfo.processInfo.systemUptime
+            let rc = device.closeConnection()
+            let connected = device.isConnected()
+            if !connected, MacBluetooth.connection?.address == address {
                 MacBluetooth.connection?.close()
                 MacBluetooth.connection = nil
             }
-            let rc = device.closeConnection()
-            guard rc == kIOReturnSuccess else { throw BluetoothFailure("蓝牙断开失败 \(rc)") }
+            AppLog.info("系统释放请求返回, status=\(rc), 蓝牙仍连接=\(connected), 音频状态=\(CoreAudioBluetooth.state(address: address)), 耗时 \(String(format: "%.2f", ProcessInfo.processInfo.systemUptime - started)) 秒.", category: "bluetooth")
+            guard rc == kIOReturnSuccess else { throw BluetoothFailure("系统释放蓝牙连接失败: \(rc)") }
         }
     }
 }
