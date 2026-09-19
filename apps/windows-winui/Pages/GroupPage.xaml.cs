@@ -1,159 +1,222 @@
+using System;
+using System.Linq;
+using EdifierCtrl.Desktop;
+using EdifierCtrl.Infrastructure;
 using EdifierCtrl.Native;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Windows.Storage;
+using Microsoft.UI.Xaml.Data;
 
 namespace EdifierCtrl.Pages;
 
 public sealed partial class GroupPage : Page
 {
-    private DispatcherTimer? _timer;
+    private bool _initialized;
+    private bool _subscribed;
+    private bool _syncing;
     private string _peerKey = "";
 
     public GroupPage()
     {
         InitializeComponent();
-        try
-        {
-            var saved = ApplicationData.Current.LocalSettings.Values["passphrase"] as string;
-            if (!string.IsNullOrEmpty(saved))
-            {
-                Passphrase.Text = saved;
-            }
-        }
-        catch
-        {
-            // unpackaged 仍可用 LocalSettings; 失败就空着.
-        }
-        Loaded += (_, _) =>
-        {
-            _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-            _timer.Tick += (_, _) =>
-            {
-                if (SessionState.GroupJoined)
-                {
-                    SessionState.RefreshPeers();
-                    ShowPeers();
-                }
-            };
-            _timer.Start();
-            if (SessionState.GroupJoined)
-            {
-                JoinBtn.Content = "已加入";
-                RefreshPeers();
-            }
-        };
-        Unloaded += (_, _) =>
-        {
-            _timer?.Stop();
-            _timer = null;
-        };
+        GroupInput.Text = AppPreferences.Current.GroupName;
+        _initialized = true;
+        Loaded += OnLoaded;
+        Unloaded += OnUnloaded;
     }
 
-    private void OnJoin(object sender, RoutedEventArgs e)
+    private static bool CanAct => SessionState.Ready && !SessionState.Busy && !SessionState.HandoffActive;
+
+    private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        try
+        if (!_subscribed)
         {
-            EdifierNative.EnsureSession();
-            EdifierNative.GroupJoin(Passphrase.Text);
-            try
-            {
-                ApplicationData.Current.LocalSettings.Values["passphrase"] = Passphrase.Text;
-            }
-            catch
-            {
-                // 记不住口令也不挡加入.
-            }
-            SessionState.GroupJoined = true;
-            SessionState.Holding = EdifierNative.Holding();
-            JoinBtn.Content = "已加入";
-            SessionState.SetHint("已加入组. 点成员接管其耳机.");
-            SessionState.RefreshPeers();
-            RefreshPeers();
+            SessionState.Changed += OnState;
+            AppPreferences.Changed += OnPreferences;
+            _subscribed = true;
         }
-        catch (Exception ex)
-        {
-            SessionState.SetHint(ex.Message);
-        }
+        OnPreferences();
+        OnState();
     }
 
-    private void OnRefresh(object sender, RoutedEventArgs e) => RefreshPeers();
+    private void OnUnloaded(object sender, RoutedEventArgs e)
+    {
+        SessionState.Changed -= OnState;
+        AppPreferences.Changed -= OnPreferences;
+        _subscribed = false;
+    }
+
+    private void OnPreferences()
+    {
+        if (!_initialized)
+        {
+            return;
+        }
+        _syncing = true;
+        try
+        {
+            RememberChoice.IsChecked = AppPreferences.Current.RememberGroup;
+            AutoJoinChoice.IsChecked = AppPreferences.Current.AutoJoinGroup;
+            PreferenceError.IsOpen = !string.IsNullOrEmpty(AppPreferences.Current.SaveError);
+            PreferenceError.Message = AppPreferences.Current.SaveError ?? "";
+        }
+        finally
+        {
+            _syncing = false;
+        }
+        UpdateForm();
+    }
+
+    private void OnState()
+    {
+        if (!_initialized)
+        {
+            return;
+        }
+        var joined = SessionState.GroupJoined;
+        GroupTitle.Text = joined ? "设备已在同一交接组" : "把你的设备连在一起";
+        JoinForm.Visibility = PageUi.Visible(!joined);
+        JoinedPanel.Visibility = PageUi.Visible(joined);
+        MembersSection.Visibility = PageUi.Visible(joined);
+        LeaveButton.IsEnabled = CanAct;
+        LocalTitle.Text = Environment.MachineName + " / 本机";
+        LocalHolding.Text = string.IsNullOrWhiteSpace(SessionState.Holding) ? "尚未确认持有耳机音频" : "正在持有 " + SessionState.Holding;
+        LocalAudio.Text = "Windows / " + SessionState.AudioLabel;
+        UpdateForm();
+        RefreshPeers();
+
+        var hasProgress = !string.IsNullOrWhiteSpace(SessionState.HandoffTitle);
+        ProgressCard.Visibility = PageUi.Visible(hasProgress);
+        ProgressTitle.Text = SessionState.HandoffTitle ?? "";
+        ProgressDetail.Text = SessionState.HandoffDetail ?? "";
+        HandoffSpinner.IsActive = SessionState.HandoffActive;
+        HandoffSpinner.Visibility = PageUi.Visible(SessionState.HandoffActive);
+        StepRequest.Opacity = SessionState.HandoffStep >= 0 ? 1 : 0.15;
+        StepRelease.Opacity = SessionState.HandoffStep >= 1 ? 1 : 0.15;
+        StepConnect.Opacity = SessionState.HandoffStep >= 2 ? 1 : 0.15;
+        StepDone.Opacity = SessionState.HandoffStep >= 3 ? 1 : 0.15;
+        HandoffHelp.Visibility = PageUi.Visible(hasProgress && !SessionState.HandoffActive && SessionState.HandoffStep < 3);
+    }
+
+    private void UpdateForm()
+    {
+        if (!_initialized)
+        {
+            return;
+        }
+        GroupInput.IsEnabled = RememberChoice.IsEnabled = CanAct && !SessionState.GroupJoined;
+        AutoJoinChoice.IsEnabled = CanAct && RememberChoice.IsChecked == true && !SessionState.GroupJoined;
+        JoinButton.IsEnabled = CanAct && !SessionState.GroupJoined && !string.IsNullOrWhiteSpace(GroupInput.Text);
+        AddressInput.IsEnabled = CanAct && SessionState.GroupJoined;
+        ClaimButton.IsEnabled = CanAct && SessionState.GroupJoined && PageUi.NormalizeAddress(AddressInput.Text) is not null
+            && !PageUi.SameAddress(AddressInput.Text, SessionState.Holding);
+        PeersList.IsEnabled = CanAct && SessionState.GroupJoined;
+    }
 
     private void RefreshPeers()
     {
-        SessionState.RefreshPeers();
-        ShowPeers();
-    }
-
-    private void ShowPeers()
-    {
-        var next = SessionState.Peers
-            .Select(p => new PeerItem
+        var next = SessionState.Peers.Select(peer =>
+        {
+            var holding = !string.IsNullOrWhiteSpace(peer.Holding);
+            var alreadyHeld = PageUi.SameAddress(peer.Holding, SessionState.Holding);
+            return new PeerRow
             {
-                Id = p.Id,
-                Host = p.Host,
-                Holding = p.Holding,
-                HoldingText = string.IsNullOrEmpty(p.Holding) ? "未持有耳机" : "持有 " + p.Holding,
-                ActionText = string.IsNullOrEmpty(p.Holding) ? "无法接管" : "点按接管音频",
-            })
-            .ToList();
-        var key = string.Join("|", next.Select(p => p.Id + "\t" + p.Host + "\t" + p.Holding));
-        if (key == _peerKey)
-        {
-            return;
-        }
-        _peerKey = key;
-        Peers.ItemsSource = next;
-    }
-
-    private async void OnPeerClick(object sender, ItemClickEventArgs e)
-    {
-        if (e.ClickedItem is not PeerItem peer)
-        {
-            return;
-        }
-        if (string.IsNullOrEmpty(peer.Holding))
-        {
-            var dlg = new ContentDialog
-            {
-                Title = peer.Host,
-                Content = "这个成员现在没有持有耳机, 没法接管.",
-                CloseButtonText = "好",
-                XamlRoot = XamlRoot,
+                Id = peer.Id,
+                DisplayName = peer.DisplayName,
+                PlatformVersion = (string.IsNullOrWhiteSpace(peer.Platform) ? "平台未回报" : peer.Platform)
+                    + " / " + (string.IsNullOrWhiteSpace(peer.AppVersion) ? "版本未回报" : peer.AppVersion),
+                AudioCapability = peer.CanAudio ? "支持音频交接" : "不支持音频交接",
+                HoldingText = holding ? "正在持有 " + peer.Holding : "当前没有持有耳机",
+                Available = peer.CanAudio && holding && !alreadyHeld,
+                Action = alreadyHeld ? "本机已持有" : "接管到本机",
             };
-            await dlg.ShowAsync();
+        }).ToArray();
+        var key = string.Join("\n", next.Select(peer => $"{peer.Id}\t{peer.DisplayName}\t{peer.PlatformVersion}\t{peer.AudioCapability}\t{peer.HoldingText}\t{peer.Available}"));
+        if (_peerKey != key)
+        {
+            _peerKey = key;
+            PeersList.ItemsSource = next;
+        }
+        MembersEmpty.Visibility = PageUi.Visible(next.Length == 0);
+    }
+
+    private void OnGroupDraft(object sender, TextChangedEventArgs e) => UpdateForm();
+    private void OnAddressDraft(object sender, TextChangedEventArgs e) => UpdateForm();
+
+    private void OnRemember(object sender, RoutedEventArgs e)
+    {
+        if (!_initialized || _syncing)
+        {
             return;
         }
-        try
+        var preferences = AppPreferences.Current;
+        preferences.RememberGroup = RememberChoice.IsChecked == true;
+        if (!preferences.RememberGroup)
         {
-            EdifierNative.GroupClaimPeer(peer.Id);
-            SessionState.SetHint("已向 " + peer.Host + " 请求接管");
+            preferences.GroupName = "";
+            preferences.AutoJoinGroup = false;
         }
-        catch (Exception ex)
+        preferences.Save();
+    }
+
+    private void OnAutoJoin(object sender, RoutedEventArgs e)
+    {
+        if (!_initialized || _syncing)
         {
-            SessionState.SetHint(ex.Message);
+            return;
+        }
+        AppPreferences.Current.AutoJoinGroup = RememberChoice.IsChecked == true && AutoJoinChoice.IsChecked == true;
+        AppPreferences.Current.Save();
+    }
+
+    private async void OnJoin(object sender, RoutedEventArgs e)
+    {
+        if (CanAct && !SessionState.GroupJoined && !string.IsNullOrWhiteSpace(GroupInput.Text))
+        {
+            await AppActions.JoinAsync(GroupInput.Text, RememberChoice.IsChecked == true);
         }
     }
 
-    private void OnClaim(object sender, RoutedEventArgs e)
+    private async void OnLeave(object sender, RoutedEventArgs e)
     {
-        try
+        if (CanAct && SessionState.GroupJoined)
         {
-            EdifierNative.GroupClaim(Mac.Text);
-            SessionState.SetHint("已请求接管 " + Mac.Text);
-        }
-        catch (Exception ex)
-        {
-            SessionState.SetHint(ex.Message);
+            await AppActions.LeaveAsync();
         }
     }
 
-    private sealed class PeerItem
+    private async void OnPeer(object sender, RoutedEventArgs e)
     {
-        public required string Id { get; init; }
-        public required string Host { get; init; }
-        public string? Holding { get; init; }
-        public required string HoldingText { get; init; }
-        public required string ActionText { get; init; }
+        if (!CanAct || !SessionState.GroupJoined || sender is not Button { Tag: string id })
+        {
+            return;
+        }
+        var peer = SessionState.Peers.FirstOrDefault(item => item.Id == id);
+        if (peer?.CanAudio == true && !string.IsNullOrWhiteSpace(peer.Holding) && !PageUi.SameAddress(peer.Holding, SessionState.Holding))
+        {
+            await AppActions.ClaimPeerAsync(id);
+        }
+    }
+
+    private async void OnClaim(object sender, RoutedEventArgs e)
+    {
+        if (ClaimButton.IsEnabled)
+        {
+            await AppActions.ClaimAsync(AddressInput.Text.Trim());
+        }
+    }
+
+    private void OnBluetooth(object sender, RoutedEventArgs e) => DesktopCommands.OpenBluetoothSettings();
+
+    [Bindable]
+    public sealed class PeerRow
+    {
+        public string Id { get; set; } = "";
+        public string DisplayName { get; set; } = "";
+        public string PlatformVersion { get; set; } = "";
+        public string AudioCapability { get; set; } = "";
+        public string HoldingText { get; set; } = "";
+        public string Action { get; set; } = "";
+        public bool Available { get; set; }
     }
 }

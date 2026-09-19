@@ -1,63 +1,46 @@
-using EdifierCtrl.Native;
+using EdifierCtrl.Desktop;
+using EdifierCtrl.Infrastructure;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 
 namespace EdifierCtrl;
 
 public partial class App : Application
 {
-    private Window? _window;
-
     public App()
     {
-        try
-        {
-            File.WriteAllText(
-                Path.Combine(AppContext.BaseDirectory, "launch.log"),
-                "App ctor\n");
-        }
-        catch
-        {
-            // 忽略启动日志失败.
-        }
         UnhandledException += (_, e) =>
         {
-            try
-            {
-                File.AppendAllText(
-                    Path.Combine(AppContext.BaseDirectory, "launch.log"),
-                    e.Exception.ToString() + Environment.NewLine);
-            }
-            catch
-            {
-                // 写日志失败时仍把异常标成已处理, 避免进程直接消失.
-            }
-            e.Handled = true;
+            AppLog.Error(e.Exception.ToString(), "unhandled");
+            AppLog.Flush();
+        };
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+        {
+            AppLog.Error(e.ExceptionObject.ToString() ?? "未知异常", "unhandled");
+            AppLog.Flush();
+        };
+        TaskScheduler.UnobservedTaskException += (_, e) =>
+        {
+            AppLog.Error(e.Exception.ToString(), "task");
+            AppLog.Flush();
+            e.SetObserved();
         };
         InitializeComponent();
     }
 
-    protected override void OnLaunched(LaunchActivatedEventArgs args)
+    protected override async void OnLaunched(LaunchActivatedEventArgs args)
     {
         try
         {
-            File.WriteAllText(
-                Path.Combine(AppContext.BaseDirectory, "launch.log"),
-                "OnLaunched\n");
-            EdifierNative.EnsureSession();
-            _window = new MainWindow();
-            _window.Closed += (_, _) => EdifierNative.Shutdown();
-            _window.Activate();
-            _ = Task.Run(SessionState.TryAutoJoin);
-            File.AppendAllText(
-                Path.Combine(AppContext.BaseDirectory, "launch.log"),
-                "activated\n");
+            var desktop = new DesktopController(DispatcherQueue.GetForCurrentThread());
+            DesktopCommands.Controller = desktop;
+            await desktop.StartAsync(args.Arguments);
         }
         catch (Exception ex)
         {
-            File.WriteAllText(
-                Path.Combine(AppContext.BaseDirectory, "launch.log"),
-                ex.ToString());
-            throw;
+            AppLog.Error("应用启动失败: " + ex, "desktop");
+            AppLog.Flush();
+            Exit();
         }
     }
 }

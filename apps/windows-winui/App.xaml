@@ -7,20 +7,61 @@
             <ResourceDictionary.MergedDictionaries>
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls"/>
             </ResourceDictionary.MergedDictionaries>
-            <Style x:Key="PageRoot" TargetType="Grid">
-                <Setter Property="Padding" Value="28,20,28,24"/>
-                <Setter Property="RowSpacing" Value="16"/>
+            <Color x:Key="SystemAccentColor">#527FF5</Color>
+            <SolidColorBrush x:Key="BrandBrush" Color="#527FF5"/>
+            <Style x:Key="PageStack" TargetType="StackPanel">
+                <Setter Property="Padding" Value="28,8,28,28"/>
+                <Setter Property="Spacing" Value="22"/>
+                <Setter Property="MaxWidth" Value="1100"/>
+                <Setter Property="HorizontalAlignment" Value="Stretch"/>
             </Style>
             <Style x:Key="CardBorder" TargetType="Border">
                 <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}"/>
                 <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}"/>
                 <Setter Property="BorderThickness" Value="1"/>
-                <Setter Property="CornerRadius" Value="8"/>
-                <Setter Property="Padding" Value="16"/>
+                <Setter Property="CornerRadius" Value="16"/>
+                <Setter Property="Padding" Value="22"/>
+            </Style>
+            <Style x:Key="HeroBorder" TargetType="Border" BasedOn="{StaticResource CardBorder}">
+                <Setter Property="CornerRadius" Value="24"/>
+                <Setter Property="Padding" Value="28"/>
+                <Setter Property="Background">
+                    <Setter.Value>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                            <GradientStop Color="#20527FF5" Offset="0"/>
+                            <GradientStop Color="#05527FF5" Offset="1"/>
+                        </LinearGradientBrush>
+                    </Setter.Value>
+                </Setter>
             </Style>
             <Style x:Key="MutedText" TargetType="TextBlock">
                 <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}"/>
                 <Setter Property="TextWrapping" Value="Wrap"/>
+                <Setter Property="FontSize" Value="13"/>
+            </Style>
+            <Style x:Key="SectionTitle" TargetType="TextBlock">
+                <Setter Property="FontSize" Value="17"/>
+                <Setter Property="FontWeight" Value="SemiBold"/>
+            </Style>
+            <Style x:Key="ActionButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+                <Setter Property="CornerRadius" Value="9"/>
+                <Setter Property="Padding" Value="16,10"/>
+                <Setter Property="MinHeight" Value="40"/>
+            </Style>
+            <Style x:Key="IconButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+                <Setter Property="Width" Value="40"/>
+                <Setter Property="Height" Value="40"/>
+                <Setter Property="Padding" Value="0"/>
+                <Setter Property="CornerRadius" Value="10"/>
+                <Setter Property="HorizontalContentAlignment" Value="Center"/>
+                <Setter Property="VerticalContentAlignment" Value="Center"/>
+            </Style>
+            <Style x:Key="ChoiceButtonStyle" TargetType="ToggleButton" BasedOn="{StaticResource DefaultToggleButtonStyle}">
+                <Setter Property="CornerRadius" Value="14"/>
+                <Setter Property="Padding" Value="20,18"/>
+                <Setter Property="HorizontalAlignment" Value="Stretch"/>
+                <Setter Property="HorizontalContentAlignment" Value="Left"/>
+                <Setter Property="MinHeight" Value="86"/>
             </Style>
         </ResourceDictionary>
     </Application.Resources>

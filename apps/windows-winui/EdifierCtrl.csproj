@@ -1,6 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
+    <OutputType Condition="'$(Configuration)' == 'Debug'">Exe</OutputType>
+    <DisableWinExeOutputInference>true</DisableWinExeOutputInference>
+    <InformationalVersion Condition="'$(EdifierVersion)' != ''">$(EdifierVersion)</InformationalVersion>
+    <InformationalVersion Condition="'$(EdifierVersion)' == ''">dev-build</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <FfiProfile Condition="'$(Configuration)' == 'Release'">release</FfiProfile>
+    <FfiProfile Condition="'$(Configuration)' != 'Release'">debug</FfiProfile>
+    <ApplicationIcon Condition="Exists('..\..\target\windows\assets\AppIcon.ico')">..\..\target\windows\assets\AppIcon.ico</ApplicationIcon>
     <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <RootNamespace>EdifierCtrl</RootNamespace>
@@ -12,8 +20,8 @@
     <WindowsPackageType>None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <WindowsAppSdkBootstrapInitialize>false</WindowsAppSdkBootstrapInitialize>
-    <EnableMsixTooling>false</EnableMsixTooling>
-    <EnableCoreMrtTooling>false</EnableCoreMrtTooling>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <EnableCoreMrtTooling>true</EnableCoreMrtTooling>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
@@ -21,18 +29,8 @@
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250108002" GeneratePathProperty="true" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" />
   </ItemGroup>
-  <Target Name="CopyFfi" AfterTargets="Build">
-    <Copy
-      SourceFiles="$(MSBuildThisFileDirectory)..\..\target\debug\edifier_ffi.dll"
-      DestinationFolder="$(OutDir)"
-      SkipUnchangedFiles="true"
-      Condition="Exists('$(MSBuildThisFileDirectory)..\..\target\debug\edifier_ffi.dll')" />
-  </Target>
-  <Target Name="CopyWinUiResourcesPri" AfterTargets="Build">
-    <Copy
-      SourceFiles="$(OutDir)Microsoft.UI.Xaml.Controls.pri"
-      DestinationFiles="$(OutDir)resources.pri"
-      SkipUnchangedFiles="true"
-      Condition="Exists('$(OutDir)Microsoft.UI.Xaml.Controls.pri')" />
-  </Target>
+  <ItemGroup>
+    <Content Include="..\..\target\$(FfiProfile)\edifier_ffi.dll" Link="edifier_ffi.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\target\windows\assets\AppIcon.ico" Link="Assets\AppIcon.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="Exists('..\..\target\windows\assets\AppIcon.ico')" />
+  </ItemGroup>
 </Project>

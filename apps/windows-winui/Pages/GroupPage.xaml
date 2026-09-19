@@ -2,50 +2,127 @@
     x:Class="EdifierCtrl.Pages.GroupPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <Grid Style="{StaticResource PageRoot}">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
-        <StackPanel Spacing="6">
-            <TextBlock Text="组" Style="{StaticResource TitleTextBlockStyle}"/>
-            <TextBlock Text="同一局域网中使用相同组名的电脑和手机会互相发现. 启动后会自动加入上次的组. 点成员即可接管它正在用的耳机." Style="{StaticResource MutedText}"/>
-        </StackPanel>
-        <StackPanel Grid.Row="1" Spacing="10">
-            <TextBox x:Name="Passphrase" Header="组名" PlaceholderText="例如 testhand"/>
-            <StackPanel Orientation="Horizontal" Spacing="8">
-                <Button x:Name="JoinBtn" Content="加入" Click="OnJoin" Style="{StaticResource AccentButtonStyle}"/>
-                <Button Content="刷新" Click="OnRefresh"/>
-            </StackPanel>
-        </StackPanel>
-        <ListView
-            x:Name="Peers"
-            Grid.Row="2"
-            SelectionMode="None"
-            IsItemClickEnabled="True"
-            ItemClick="OnPeerClick">
-            <ListView.ItemTemplate>
-                <DataTemplate>
-                    <Border Style="{StaticResource CardBorder}" Margin="0,0,0,8">
-                        <StackPanel Spacing="4">
-                            <TextBlock Text="{Binding Host}" Style="{StaticResource SubtitleTextBlockStyle}"/>
-                            <TextBlock Text="{Binding Id}" Style="{StaticResource CaptionTextBlockStyle}"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                            <TextBlock Text="{Binding HoldingText}"/>
-                            <TextBlock Text="{Binding ActionText}"
-                                       Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
+        <StackPanel Style="{StaticResource PageStack}" HorizontalAlignment="Stretch">
+            <Border Style="{StaticResource CardBorder}" Padding="22" CornerRadius="16">
+                <StackPanel Spacing="22">
+                    <Grid ColumnSpacing="18">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="58"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                        <FontIcon Glyph="&#xE8B7;" FontSize="36" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                        <StackPanel Grid.Column="1" Spacing="8">
+                            <TextBlock x:Name="GroupTitle" Text="把你的设备连在一起" Style="{StaticResource SectionTitle}"/>
+                            <TextBlock Text="Android / macOS / Windows / Linux" Style="{StaticResource MutedText}"/>
+                            <TextBlock Text="同一局域网内使用相同组名, 就能发现彼此并交接耳机." Style="{StaticResource MutedText}"/>
                         </StackPanel>
-                    </Border>
-                </DataTemplate>
-            </ListView.ItemTemplate>
-        </ListView>
-        <Expander Grid.Row="3" Header="用 MAC 接管" HorizontalAlignment="Stretch">
-            <StackPanel Spacing="8">
-                <TextBox x:Name="Mac" PlaceholderText="耳机 MAC"/>
-                <Button Content="接管" Click="OnClaim"/>
+                    </Grid>
+                    <StackPanel x:Name="JoinForm" Spacing="14">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <TextBox x:Name="GroupInput" Header="组名" PlaceholderText="输入与其他设备完全相同的组名" TextChanged="OnGroupDraft"/>
+                            <Button x:Name="JoinButton" Grid.Column="1" Content="加入交接组" Click="OnJoin" Style="{StaticResource AccentButtonStyle}" VerticalAlignment="Bottom"/>
+                        </Grid>
+                        <StackPanel Orientation="Horizontal" Spacing="22">
+                            <CheckBox x:Name="RememberChoice" Content="记住组名" Click="OnRemember"/>
+                            <CheckBox x:Name="AutoJoinChoice" Content="启动时自动加入" Click="OnAutoJoin"/>
+                        </StackPanel>
+                    </StackPanel>
+                    <Grid x:Name="JoinedPanel" Visibility="Collapsed" ColumnSpacing="18">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <StackPanel Spacing="8"><TextBlock Text="已加入交接组" FontWeight="SemiBold"/><TextBlock Text="关闭窗口后仍可响应其他设备的交接请求." Style="{StaticResource MutedText}"/></StackPanel>
+                        <Button x:Name="LeaveButton" Grid.Column="1" Content="退出交接组" Click="OnLeave" Style="{StaticResource ActionButtonStyle}" VerticalAlignment="Center"/>
+                    </Grid>
+                    <InfoBar x:Name="PreferenceError" Severity="Error" IsClosable="False" Title="无法保存偏好" IsOpen="False"/>
+                </StackPanel>
+            </Border>
+
+            <Border x:Name="ProgressCard" Style="{StaticResource CardBorder}" Padding="22" CornerRadius="16" Visibility="Collapsed">
+                <StackPanel Spacing="20">
+                    <Grid ColumnSpacing="14">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                        <ProgressRing x:Name="HandoffSpinner" Width="28" Height="28" IsActive="False"/>
+                        <StackPanel Grid.Column="1" Spacing="7">
+                            <TextBlock x:Name="ProgressTitle" Style="{StaticResource SectionTitle}"/>
+                            <TextBlock x:Name="ProgressDetail" Style="{StaticResource MutedText}"/>
+                        </StackPanel>
+                    </Grid>
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                        <StackPanel Spacing="9"><Border x:Name="StepRequest" Height="4" CornerRadius="2" Background="{ThemeResource AccentFillColorDefaultBrush}"/><TextBlock Text="发起请求" Style="{StaticResource MutedText}"/></StackPanel>
+                        <StackPanel Grid.Column="1" Spacing="9"><Border x:Name="StepRelease" Height="4" CornerRadius="2" Background="{ThemeResource AccentFillColorDefaultBrush}"/><TextBlock Text="释放原连接" Style="{StaticResource MutedText}"/></StackPanel>
+                        <StackPanel Grid.Column="2" Spacing="9"><Border x:Name="StepConnect" Height="4" CornerRadius="2" Background="{ThemeResource AccentFillColorDefaultBrush}"/><TextBlock Text="建立新连接" Style="{StaticResource MutedText}"/></StackPanel>
+                        <StackPanel Grid.Column="3" Spacing="9"><Border x:Name="StepDone" Height="4" CornerRadius="2" Background="{ThemeResource AccentFillColorDefaultBrush}"/><TextBlock Text="完成" Style="{StaticResource MutedText}"/></StackPanel>
+                    </Grid>
+                    <StackPanel x:Name="HandoffHelp" Spacing="10" Visibility="Collapsed">
+                        <TextBlock Text="如果音频尚未接通, 请确认耳机已配对并开启, 原设备客户端保持运行. 可从 Windows 蓝牙设置连接耳机后重试." Style="{StaticResource MutedText}"/>
+                        <HyperlinkButton Content="打开 Windows 蓝牙设置" Click="OnBluetooth" Padding="0"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <StackPanel x:Name="MembersSection" Spacing="22" Visibility="Collapsed">
+                <Border Style="{StaticResource CardBorder}" Padding="22" CornerRadius="16">
+                    <Grid ColumnSpacing="18">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="52"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                        <FontIcon Glyph="&#xE770;" FontSize="30" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                        <StackPanel Grid.Column="1" Spacing="8">
+                            <TextBlock x:Name="LocalTitle" Text="这台 Windows 设备 / 本机" Style="{StaticResource SectionTitle}"/>
+                            <TextBlock x:Name="LocalHolding" Text="尚未确认持有耳机音频" Style="{StaticResource MutedText}" IsTextSelectionEnabled="True"/>
+                            <TextBlock x:Name="LocalAudio" Style="{StaticResource MutedText}"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <StackPanel Spacing="6"><TextBlock Text="附近的设备" Style="{StaticResource SectionTitle}"/><TextBlock Text="请求对方释放耳机, 随后连接本机音频." Style="{StaticResource MutedText}"/></StackPanel>
+                    <TextBlock Grid.Column="1" Text="自动发现中" Style="{StaticResource MutedText}" VerticalAlignment="Center"/>
+                </Grid>
+                <Border x:Name="MembersEmpty" Style="{StaticResource CardBorder}" Padding="22" CornerRadius="16">
+                    <StackPanel Spacing="16" HorizontalAlignment="Center" Margin="12,16">
+                        <FontIcon Glyph="&#xE8B7;" FontSize="38" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                        <TextBlock Text="等待你的其他设备" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                        <TextBlock Text="各端使用相同组名加入交接组. 确保设备处于同一局域网, 并允许应用通过系统防火墙访问本地网络." MaxWidth="550" TextAlignment="Center" Style="{StaticResource MutedText}"/>
+                    </StackPanel>
+                </Border>
+                <ItemsControl x:Name="PeersList">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Style="{StaticResource CardBorder}" Padding="22" CornerRadius="16" Margin="0,0,0,14">
+                                <Grid ColumnSpacing="18">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="48"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                    <FontIcon Glyph="&#xE8B7;" FontSize="28" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                                    <StackPanel Grid.Column="1" Spacing="7">
+                                        <TextBlock Text="{Binding DisplayName}" FontSize="17" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                        <TextBlock Text="{Binding PlatformVersion}" Style="{StaticResource MutedText}"/>
+                                        <TextBlock Text="{Binding AudioCapability}" Style="{StaticResource MutedText}"/>
+                                        <TextBlock Text="{Binding HoldingText}" Style="{StaticResource MutedText}" IsTextSelectionEnabled="True"/>
+                                    </StackPanel>
+                                    <Button Grid.Column="2" Content="{Binding Action}" IsEnabled="{Binding Available}" Tag="{Binding Id}" Click="OnPeer" Style="{StaticResource ActionButtonStyle}" VerticalAlignment="Center" ToolTipService.ToolTip="{Binding AudioCapability}"/>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <Expander Header="通过耳机地址接管" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                    <StackPanel Spacing="14">
+                        <TextBlock Text="耳机必须已在本机配对. 确保原设备也已加入同一组." Style="{StaticResource MutedText}"/>
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <TextBox x:Name="AddressInput" PlaceholderText="AA:BB:CC:DD:EE:FF" FontFamily="Consolas" TextChanged="OnAddressDraft" AutomationProperties.Name="手动接管蓝牙地址"/>
+                            <Button x:Name="ClaimButton" Grid.Column="1" Content="接管到本机" Click="OnClaim" Style="{StaticResource ActionButtonStyle}"/>
+                        </Grid>
+                    </StackPanel>
+                </Expander>
             </StackPanel>
-        </Expander>
-    </Grid>
+
+            <Border Style="{StaticResource CardBorder}" Padding="22" CornerRadius="16">
+                <StackPanel Spacing="18">
+                    <TextBlock Text="交接前, 准备这三件事" Style="{StaticResource SectionTitle}"/>
+                    <StackPanel Spacing="6"><TextBlock Text="1. 分别完成配对" FontWeight="SemiBold"/><TextBlock Text="让耳机先与需要使用的手机和电脑分别配对一次." Style="{StaticResource MutedText}"/></StackPanel>
+                    <StackPanel Spacing="6"><TextBlock Text="2. 使用同一局域网" FontWeight="SemiBold"/><TextBlock Text="各端打开 EdifierCtrl, 输入完全相同的组名." Style="{StaticResource MutedText}"/></StackPanel>
+                    <StackPanel Spacing="6"><TextBlock Text="3. 在目标设备接管" FontWeight="SemiBold"/><TextBlock Text="原设备释放音频后, 目标设备尝试连接耳机. 蓝牙与系统权限会影响接管结果." Style="{StaticResource MutedText}"/></StackPanel>
+                    <HyperlinkButton Content="打开 Windows 蓝牙设置" Click="OnBluetooth" Padding="0"/>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
 </Page>

@@ -1,212 +1,185 @@
-using System.Text.Json;
+using System;
+using System.Linq;
+using EdifierCtrl.Desktop;
 using EdifierCtrl.Native;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Data;
 
 namespace EdifierCtrl.Pages;
 
 public sealed partial class DevicePage : Page
 {
-    private readonly List<DeviceItem> _scanned = [];
+    private bool _initialized;
+    private bool _subscribed;
+    private bool _scanning;
     private string _listKey = "";
+    private string _listedKind = "rfcomm";
 
     public DevicePage()
     {
         InitializeComponent();
-        try
-        {
-            EdifierNative.EnsureSession();
-        }
-        catch (Exception ex)
-        {
-            SessionState.SetHint("尚未加载 edifier_ffi.dll: " + ex.Message);
-        }
-        Loaded += (_, _) =>
-        {
-            SessionState.Changed += OnState;
-            Scan();
-        };
-        Unloaded += (_, _) => SessionState.Changed -= OnState;
+        _initialized = true;
+        Loaded += OnLoaded;
+        Unloaded += OnUnloaded;
     }
 
-    private string KindValue()
+    private string Kind => (KindChoice.SelectedItem as ComboBoxItem)?.Tag as string ?? "rfcomm";
+    private static bool CanAct => SessionState.Ready && !SessionState.Busy;
+
+    private async void OnLoaded(object sender, RoutedEventArgs e)
     {
-        if (Kind.SelectedItem is RadioButton rb && rb.Tag is string tag)
+        if (!_subscribed)
         {
-            return tag;
+            SessionState.Changed += OnState;
+            _subscribed = true;
         }
-        return "rfcomm";
+        OnState();
+        if (CanAct && SessionState.Devices.Count == 0)
+        {
+            await ScanAsync();
+        }
+    }
+
+    private void OnUnloaded(object sender, RoutedEventArgs e)
+    {
+        SessionState.Changed -= OnState;
+        _subscribed = false;
     }
 
     private void OnState()
     {
-        DispatcherQueue.TryEnqueue(ShowDevices);
-    }
-
-    private void OnScan(object sender, RoutedEventArgs e) => Scan();
-
-    private void Scan()
-    {
-        var kind = KindValue();
-        SessionState.SetHint("正在扫描...");
-        _ = Task.Run(() =>
-        {
-            try
-            {
-                var json = EdifierNative.Scan(kind);
-                var items = new List<DeviceItem>();
-                using var doc = JsonDocument.Parse(json);
-                foreach (var item in doc.RootElement.EnumerateArray())
-                {
-                    var address = item.GetProperty("address").GetString() ?? "";
-                    var name = item.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
-                    if (kind != "rfcomm" && !SessionState.IsEdifierName(name))
-                    {
-                        continue;
-                    }
-                    items.Add(new DeviceItem
-                    {
-                        Address = address,
-                        Name = string.IsNullOrWhiteSpace(name) ? "未命名耳机" : name,
-                    });
-                }
-                DispatcherQueue.TryEnqueue(() =>
-                {
-                    _scanned.Clear();
-                    _scanned.AddRange(items);
-                    ShowDevices();
-                    SessionState.SetHint(_scanned.Count == 0 && !SessionState.Peers.Any(p => !string.IsNullOrEmpty(p.Holding))
-                        ? "没有发现漫步者耳机. 请先在系统蓝牙里配对."
-                        : $"找到 {Devices.Items.Count} 台.");
-                });
-            }
-            catch (Exception ex)
-            {
-                SessionState.SetHint(ex.Message);
-            }
-        });
-    }
-
-    private void ShowDevices()
-    {
-        var map = new Dictionary<string, DeviceItem>(StringComparer.OrdinalIgnoreCase);
-        foreach (var row in _scanned)
-        {
-            map[Norm(row.Address)] = Decorate(row.Address, row.Name);
-        }
-        foreach (var peer in SessionState.Peers)
-        {
-            if (string.IsNullOrEmpty(peer.Holding) || SessionState.SameMac(SessionState.Holding, peer.Holding))
-            {
-                continue;
-            }
-            var key = Norm(peer.Holding);
-            if (map.ContainsKey(key))
-            {
-                continue;
-            }
-            map[key] = new DeviceItem
-            {
-                Address = peer.Holding,
-                Name = "占用中的耳机",
-                PeerId = peer.Id,
-                Action = "被 " + peer.Host + " 占用 · 点按接管",
-            };
-        }
-        var next = map.Values.ToList();
-        var listKey = string.Join("|", next.Select(r => r.Address + "\t" + r.Name + "\t" + r.PeerId + "\t" + r.Action));
-        if (listKey == _listKey)
+        if (!_initialized)
         {
             return;
         }
-        _listKey = listKey;
-        Devices.ItemsSource = next;
+        ScanButton.IsEnabled = CanAct && !_scanning;
+        ScanButton.Content = _scanning ? "正在刷新" : "刷新设备";
+        DevicesList.IsEnabled = CanAct && !_scanning;
+        KindChoice.IsEnabled = CanAct && !_scanning;
+        AddressInput.IsEnabled = CanAct && !_scanning;
+        ConnectAddressButton.IsEnabled = CanAct && !_scanning && PageUi.NormalizeAddress(AddressInput.Text) is not null;
+        ListStatus.Text = _scanning ? "正在读取蓝牙设备..." : !string.IsNullOrWhiteSpace(SessionState.Operation) ? SessionState.Operation
+            : Kind == "rfcomm" ? "经典蓝牙控制通道. 控制连接与系统音频连接分别管理." : "低功耗蓝牙控制通道";
+        RefreshRows();
     }
 
-    private static DeviceItem Decorate(string address, string name)
+    private void RefreshRows()
     {
-        var holder = SessionState.HolderOf(address);
-        var self = SessionState.SameMac(SessionState.Holding, address);
-        var occupied = holder != null && !self;
-        return new DeviceItem
+        var search = SearchInput.Text.Trim();
+        var next = SessionState.Devices
+            .Where(device => string.IsNullOrEmpty(search) || device.DisplayName.Contains(search, StringComparison.OrdinalIgnoreCase)
+                || device.Address.Contains(search, StringComparison.OrdinalIgnoreCase))
+            .Select(device =>
+            {
+                var connected = SessionState.Connected && PageUi.SameAddress(device.Address, SessionState.Address);
+                var occupied = !string.IsNullOrEmpty(device.PeerId);
+                var peer = occupied ? SessionState.Peers.FirstOrDefault(item => item.Id == device.PeerId) : null;
+                return new DeviceRow
+                {
+                    Address = device.Address,
+                    Name = device.Name,
+                    Kind = device.Kind,
+                    DisplayName = device.DisplayName,
+                    PeerId = device.PeerId,
+                    Detail = connected ? "控制通道已连接" : device.ActionText,
+                    Action = connected ? "断开控制" : occupied ? "接管到本机" : "连接",
+                    Available = connected || !occupied || (SessionState.GroupJoined && peer?.CanAudio == true
+                        && !PageUi.SameAddress(SessionState.Holding, device.Address)),
+                    Connected = connected,
+                };
+            }).ToArray();
+        var key = string.Join("\n", next.Select(row => $"{row.Address}\t{row.Kind}\t{row.DisplayName}\t{row.PeerId}\t{row.Detail}\t{row.Action}\t{row.Available}"));
+        if (_listKey != key)
         {
-            Address = address,
-            Name = name,
-            PeerId = occupied ? holder!.Id : null,
-            Action = occupied
-                ? "被 " + holder!.Host + " 占用 · 点按接管"
-                : self ? "本机持有 · 点按连接" : "点按连接",
-        };
+            _listKey = key;
+            DevicesList.ItemsSource = next;
+        }
+        EmptyCard.Visibility = PageUi.Visible(next.Length == 0);
+        EmptyTitle.Text = _scanning ? "正在读取蓝牙设备" : string.IsNullOrEmpty(search) ? "还没有找到耳机" : "没有匹配的设备";
+        EmptyDetail.Text = string.IsNullOrEmpty(search)
+            ? "确认耳机已在 Windows 蓝牙设置中配对并打开, 然后刷新设备列表. 同组设备持有的耳机也会出现在这里."
+            : "试试其他名称或蓝牙地址, 或清空搜索查看全部设备.";
     }
 
-    private static string Norm(string addr) => new string(addr.Where(char.IsLetterOrDigit).ToArray());
-
-    private void OnDeviceClick(object sender, ItemClickEventArgs e)
+    private async System.Threading.Tasks.Task ScanAsync()
     {
-        if (e.ClickedItem is not DeviceItem row)
+        if (!CanAct || _scanning)
         {
             return;
         }
-        if (!string.IsNullOrEmpty(row.PeerId))
-        {
-            try
-            {
-                EdifierNative.GroupClaimPeer(row.PeerId);
-                SessionState.SetHint("已向对端请求接管 " + row.Name);
-            }
-            catch (Exception ex)
-            {
-                SessionState.SetHint(ex.Message);
-            }
-            return;
-        }
-        Connect(row);
-    }
-
-    private void Connect(DeviceItem row)
-    {
-        var kind = KindValue();
-        SessionState.SetHint("正在连接 " + row.Name);
-        _ = Task.Run(() =>
-        {
-            try
-            {
-                EdifierNative.Connect(row.Address, kind);
-                SessionState.SetConnected(true, row.Address, row.Name);
-                try
-                {
-                    EdifierNative.SendJson("""{"op":"query_battery"}""");
-                }
-                catch
-                {
-                    // 查电量失败不影响已连接.
-                }
-            }
-            catch (Exception ex)
-            {
-                SessionState.SetHint(ex.Message);
-            }
-        });
-    }
-
-    private void OnDisconnect(object sender, RoutedEventArgs e)
-    {
+        _scanning = true;
+        _listedKind = Kind;
+        OnState();
         try
         {
-            EdifierNative.Disconnect();
-            SessionState.SetConnected(false, SessionState.Address, SessionState.DeviceName);
+            await AppActions.ScanAsync(_listedKind);
         }
-        catch (Exception ex)
+        finally
         {
-            SessionState.SetHint(ex.Message);
+            _scanning = false;
+            OnState();
         }
     }
 
-    private sealed class DeviceItem
+    private async void OnScan(object sender, RoutedEventArgs e) => await ScanAsync();
+    private void OnBluetooth(object sender, RoutedEventArgs e) => DesktopCommands.OpenBluetoothSettings();
+    private void OnSearch(object sender, TextChangedEventArgs e)
     {
-        public required string Address { get; init; }
-        public required string Name { get; init; }
-        public string? PeerId { get; init; }
-        public string Action { get; init; } = "点按连接";
+        if (_initialized)
+        {
+            RefreshRows();
+        }
+    }
+    private void OnAddress(object sender, TextChangedEventArgs e) => OnState();
+
+    private async void OnKind(object sender, SelectionChangedEventArgs e)
+    {
+        if (_initialized && CanAct)
+        {
+            await ScanAsync();
+        }
+    }
+
+    private async void OnDevice(object sender, RoutedEventArgs e)
+    {
+        if (!CanAct || _scanning || sender is not Button { Tag: DeviceRow row } || !row.Available)
+        {
+            return;
+        }
+        if (row.Connected)
+        {
+            await AppActions.DisconnectAsync();
+        }
+        else if (!string.IsNullOrEmpty(row.PeerId))
+        {
+            await AppActions.ClaimPeerAsync(row.PeerId);
+        }
+        else
+        {
+            await AppActions.ConnectAsync(row.Address, row.Name, row.Kind);
+        }
+    }
+
+    private async void OnConnectAddress(object sender, RoutedEventArgs e)
+    {
+        if (CanAct && !_scanning && PageUi.NormalizeAddress(AddressInput.Text) is not null)
+        {
+            await AppActions.ConnectAsync(AddressInput.Text.Trim(), kind: Kind);
+        }
+    }
+
+    [Bindable]
+    public sealed class DeviceRow
+    {
+        public string Address { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string Kind { get; set; } = "rfcomm";
+        public string DisplayName { get; set; } = "";
+        public string? PeerId { get; set; }
+        public string Detail { get; set; } = "";
+        public string Action { get; set; } = "";
+        public bool Available { get; set; }
+        public bool Connected { get; set; }
     }
 }
