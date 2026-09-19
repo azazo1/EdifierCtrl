@@ -1,36 +1,30 @@
 using EdifierCtrl.Native;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Navigation;
 
 namespace EdifierCtrl.Pages;
 
 public sealed partial class ControlPage : Page
 {
-    private EventPump? _pump;
-
     public ControlPage()
     {
         InitializeComponent();
+        Loaded += (_, _) =>
+        {
+            Lead.Text = SessionState.Connected
+                ? "改降噪或查电量会发到已连接的耳机."
+                : "先到设备页连接耳机.";
+        };
     }
 
-    protected override void OnNavigatedTo(NavigationEventArgs e)
+    private void OnModeClick(object sender, RoutedEventArgs e)
     {
-        _pump = new EventPump(ev => Log.Text = ev + "\n" + Log.Text);
-        _pump.Start();
+        if (sender is not RadioButton rb || rb.Tag is not string mode)
+        {
+            return;
+        }
+        Send("{\"op\":\"set_noise_mode\",\"mode\":\"" + mode + "\"}");
     }
-
-    protected override void OnNavigatedFrom(NavigationEventArgs e)
-    {
-        _pump?.Stop();
-        _pump = null;
-    }
-
-    private void OnNormal(object sender, RoutedEventArgs e) => Send("""{"op":"set_noise_mode","mode":"normal"}""");
-
-    private void OnAnc(object sender, RoutedEventArgs e) => Send("""{"op":"set_noise_mode","mode":"reduction"}""");
-
-    private void OnAmbient(object sender, RoutedEventArgs e) => Send("""{"op":"set_noise_mode","mode":"ambient"}""");
 
     private void OnBattery(object sender, RoutedEventArgs e) => Send("""{"op":"query_battery"}""");
 
@@ -39,11 +33,11 @@ public sealed partial class ControlPage : Page
         try
         {
             EdifierNative.Readout("basedevice");
-            Log.Text = "已发送读状态.\n" + Log.Text;
+            SessionState.SetHint("已请求读取状态");
         }
         catch (Exception ex)
         {
-            Log.Text = ex.Message;
+            SessionState.SetHint(ex.Message);
         }
     }
 
@@ -51,8 +45,8 @@ public sealed partial class ControlPage : Page
     {
         var dlg = new ContentDialog
         {
-            Title = "确认",
-            Content = "发 CD 会断开当前主机. 交接回退可以自动发, 这里是手动.",
+            Title = "断开当前主机",
+            Content = "会给耳机发 CD, 当前正在播放的设备会掉线. 局域网交接失败时会自动发, 这里是手动.",
             PrimaryButtonText = "发送",
             CloseButtonText = "取消",
             XamlRoot = XamlRoot,
@@ -64,16 +58,16 @@ public sealed partial class ControlPage : Page
         Send("""{"op":"disconnect_host"}""");
     }
 
-    private void Send(string json)
+    private static void Send(string json)
     {
         try
         {
             EdifierNative.SendJson(json);
-            Log.Text = "已发送 " + json + "\n" + Log.Text;
+            SessionState.SetHint("已发送");
         }
         catch (Exception ex)
         {
-            Log.Text = ex.Message + "\n" + EdifierNative.EncodeCommand(json);
+            SessionState.SetHint(ex.Message);
         }
     }
 }

@@ -1,158 +1,360 @@
 package dev.edifierctrl.app.ui
 
-import androidx.compose.foundation.clickable
+import android.content.Context
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.edifierctrl.app.EdifierNative
 import kotlinx.coroutines.delay
 import org.json.JSONArray
 
 @Composable
-fun DeviceScreen() {
-    var log by remember { mutableStateOf(statusLine()) }
-    var devices by remember { mutableStateOf(listOf<DeviceRow>()) }
-    val session = remember { EdifierNative.ensureSession() }
-    Column(Modifier.padding(24.dp).verticalScroll(rememberScrollState())) {
-        Text("设备")
-        Text(log)
-        Button(onClick = {
-            val json = nativeCall { EdifierNative.sessionScan(session, "rfcomm") }
-            log = json
-            devices = parseDevices(json)
-        }) {
-            Text("扫描 RFCOMM")
-        }
-        Button(onClick = {
-            val json = nativeCall { EdifierNative.sessionScan(session, "ble") }
-            log = json
-            devices = parseDevices(json)
-        }) {
-            Text("扫描 BLE")
-        }
-        devices.forEach { row ->
+fun StatusBanner() {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(SessionUi.statusLine(), style = MaterialTheme.typography.titleSmall)
             Text(
-                "${row.address}  ${row.name}",
-                modifier = Modifier.clickable {
-                    log = nativeCall {
-                        val rc = EdifierNative.sessionConnect(session, row.address, "rfcomm")
-                        if (rc != 0) EdifierNative.lastError() else "已连接 ${row.address}"
-                    }
-                },
+                SessionUi.hint,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-        }
-        Button(onClick = {
-            log = nativeCall {
-                val rc = EdifierNative.sessionDisconnect(session)
-                if (rc != 0) EdifierNative.lastError() else "已断开控制通道"
+            SessionUi.battery?.let { pct ->
+                LinearProgressIndicator(
+                    progress = { pct / 100f },
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
-        }) {
-            Text("断开控制")
         }
-        EventLog(session) { ev -> log = ev + "\n" + log }
     }
 }
 
 @Composable
+fun DeviceScreen() {
+    var devices by remember { mutableStateOf(listOf<DeviceRow>()) }
+    var kind by remember { mutableStateOf("rfcomm") }
+    var scanning by remember { mutableStateOf(false) }
+    val session = remember { EdifierNative.ensureSession() }
+    Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 12.dp)) {
+        Text("设备", style = MaterialTheme.typography.headlineSmall)
+        Text(
+            "只列出系统里已经配对的耳机. 点卡片即可连接控制通道.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
+        )
+        StatusBanner()
+        Spacer(Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                selected = kind == "rfcomm",
+                onClick = { kind = "rfcomm" },
+                label = { Text("经典蓝牙") },
+            )
+            FilterChip(
+                selected = kind == "ble",
+                onClick = { kind = "ble" },
+                label = { Text("BLE") },
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = {
+                    scanning = true
+                    val json = nativeCall { EdifierNative.sessionScan(session, kind) }
+                    devices = parseDevices(json)
+                    SessionUi.hint = if (devices.isEmpty()) {
+                        "没有发现设备. 请先在系统蓝牙里配对."
+                    } else {
+                        "找到 ${devices.size} 台, 点卡片连接."
+                    }
+                    scanning = false
+                },
+            ) {
+                Text(if (scanning) "扫描中" else "扫描")
+            }
+            OutlinedButton(
+                enabled = SessionUi.connected,
+                onClick = {
+                    SessionUi.hint = nativeCall {
+                        val rc = EdifierNative.sessionDisconnect(session)
+                        if (rc != 0) EdifierNative.lastError() else "已断开控制通道"
+                    }
+                    SessionUi.connected = false
+                },
+            ) {
+                Text("断开")
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(devices, key = { it.address }) { row ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = {
+                        SessionUi.hint = nativeCall {
+                            val rc = EdifierNative.sessionConnect(session, row.address, kind)
+                            if (rc != 0) {
+                                EdifierNative.lastError()
+                            } else {
+                                SessionUi.address = row.address
+                                SessionUi.deviceName = row.name.ifBlank { row.address }
+                                SessionUi.connected = true
+                                EdifierNative.sessionSendJson(session, """{"op":"query_battery"}""")
+                                "已连接 ${row.name.ifBlank { row.address }}"
+                            }
+                        }
+                    },
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text(
+                            row.name.ifBlank { "未命名耳机" },
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Text(
+                            row.address,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            "点按连接",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
 fun ControlScreen() {
-    var log by remember { mutableStateOf("先连接耳机.") }
     var confirmCd by remember { mutableStateOf(false) }
     val session = remember { EdifierNative.ensureSession() }
-    Column(Modifier.padding(24.dp).verticalScroll(rememberScrollState())) {
-        Text("控制")
-        Button(onClick = { log = sendOrEncode(session, """{"op":"set_noise_mode","mode":"normal"}""") }) {
-            Text("降噪关")
-        }
-        Button(onClick = { log = sendOrEncode(session, """{"op":"set_noise_mode","mode":"reduction"}""") }) {
-            Text("降噪")
-        }
-        Button(onClick = { log = sendOrEncode(session, """{"op":"query_battery"}""") }) {
-            Text("查电量")
-        }
-        Button(onClick = {
-            log = nativeCall {
-                val rc = EdifierNative.sessionReadout(session, "basedevice")
-                if (rc != 0) EdifierNative.lastError() else "已发送读状态"
+    val modes = listOf("normal" to "关闭", "reduction" to "降噪", "ambient" to "通透")
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(horizontal = 20.dp, vertical = 12.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("控制", style = MaterialTheme.typography.headlineSmall)
+        Text(
+            if (SessionUi.connected) "改降噪或查电量会发到已连接的耳机." else "先到设备页连接耳机.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        StatusBanner()
+        Text("降噪模式", style = MaterialTheme.typography.titleMedium)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            modes.forEach { (mode, label) ->
+                FilterChip(
+                    selected = SessionUi.noise == mode,
+                    onClick = {
+                        SessionUi.noise = mode
+                        SessionUi.hint = sendOrEncode(
+                            session,
+                            """{"op":"set_noise_mode","mode":"$mode"}""",
+                        )
+                    },
+                    label = { Text(label) },
+                )
             }
-        }) {
-            Text("读取状态")
         }
-        Button(onClick = { confirmCd = true }) { Text("断开主机 (CD)") }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilledTonalButton(onClick = {
+                SessionUi.hint = sendOrEncode(session, """{"op":"query_battery"}""")
+            }) { Text("查电量") }
+            FilledTonalButton(onClick = {
+                SessionUi.hint = nativeCall {
+                    val rc = EdifierNative.sessionReadout(session, "basedevice")
+                    if (rc != 0) EdifierNative.lastError() else "已请求读取状态"
+                }
+            }) { Text("读取状态") }
+        }
+        Button(
+            onClick = { confirmCd = true },
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.error,
+                contentColor = MaterialTheme.colorScheme.onError,
+            ),
+        ) {
+            Text("断开当前主机")
+        }
         if (confirmCd) {
             AlertDialog(
                 onDismissRequest = { confirmCd = false },
-                title = { Text("确认") },
-                text = { Text("发 CD 会断开当前主机. 交接回退可以自动发, 这里是手动.") },
+                title = { Text("断开当前主机") },
+                text = { Text("会给耳机发 CD, 当前正在播放的设备会掉线. 局域网交接失败时会自动发, 这里是手动.") },
                 confirmButton = {
                     Button(onClick = {
                         confirmCd = false
-                        log = sendOrEncode(session, """{"op":"disconnect_host"}""")
+                        SessionUi.hint = sendOrEncode(session, """{"op":"disconnect_host"}""")
                     }) { Text("发送") }
                 },
                 dismissButton = {
-                    Button(onClick = { confirmCd = false }) { Text("取消") }
+                    TextButton(onClick = { confirmCd = false }) { Text("取消") }
                 },
             )
         }
-        EventLog(session) { ev -> log = ev + "\n" + log }
-        Text(log)
     }
 }
 
 @Composable
 fun GroupScreen() {
-    var pass by remember { mutableStateOf("") }
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("edifierctrl", Context.MODE_PRIVATE) }
+    var pass by remember { mutableStateOf(prefs.getString("passphrase", "") ?: "") }
+    var advanced by remember { mutableStateOf(false) }
     var mac by remember { mutableStateOf("") }
-    var log by remember { mutableStateOf("加入后点某个成员接管其耳机.") }
     var peers by remember { mutableStateOf(listOf<PeerRow>()) }
     val session = remember { EdifierNative.ensureSession() }
-    Column(Modifier.padding(24.dp).verticalScroll(rememberScrollState())) {
-        Text("组")
-        OutlinedTextField(value = pass, onValueChange = { pass = it }, label = { Text("组口令") })
-        Button(onClick = {
-            log = nativeCall {
-                val rc = EdifierNative.sessionGroupJoin(session, pass)
-                if (rc != 0) EdifierNative.lastError() else "已加入"
-            }
+    LaunchedEffect(SessionUi.groupJoined) {
+        while (SessionUi.groupJoined) {
             peers = loadPeers(session)
-        }) {
-            Text("加入")
+            delay(2000)
         }
-        Button(onClick = { peers = loadPeers(session) }) { Text("刷新成员") }
-        peers.forEach { peer ->
-            Text(
-                peer.label,
-                modifier = Modifier.clickable {
-                    log = nativeCall {
-                        val rc = EdifierNative.sessionGroupClaimPeer(session, peer.id)
-                        if (rc != 0) EdifierNative.lastError() else "已请求接管 ${peer.label}"
+    }
+    Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 12.dp)) {
+        Text("组", style = MaterialTheme.typography.headlineSmall)
+        Text(
+            "同一口令的电脑和手机在同一局域网. 点成员即可接管它正在用的耳机.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
+        )
+        StatusBanner()
+        Spacer(Modifier.height(12.dp))
+        OutlinedTextField(
+            value = pass,
+            onValueChange = { pass = it },
+            label = { Text("组口令") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Button(
+                onClick = {
+                    SessionUi.hint = nativeCall {
+                        val rc = EdifierNative.sessionGroupJoin(session, pass)
+                        if (rc != 0) {
+                            EdifierNative.lastError()
+                        } else {
+                            prefs.edit().putString("passphrase", pass).apply()
+                            SessionUi.groupJoined = true
+                            SessionUi.holding = EdifierNative.sessionHolding(session)
+                            "已加入组"
+                        }
                     }
+                    peers = loadPeers(session)
                 },
+            ) { Text(if (SessionUi.groupJoined) "已加入" else "加入") }
+            OutlinedButton(onClick = { peers = loadPeers(session) }) { Text("刷新") }
+        }
+        Spacer(Modifier.height(12.dp))
+        if (peers.isEmpty()) {
+            Text(
+                if (SessionUi.groupJoined) "还没有其他成员. 确认电脑和手机在同一 Wi-Fi." else "加入后这里会列出局域网里的其他设备.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        OutlinedTextField(value = mac, onValueChange = { mac = it }, label = { Text("耳机 MAC") })
-        Button(onClick = {
-            log = nativeCall {
-                val rc = EdifierNative.sessionGroupClaim(session, mac)
-                if (rc != 0) EdifierNative.lastError() else "已请求接管 $mac"
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f, fill = false)) {
+            items(peers, key = { it.id }) { peer ->
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(peer.host, style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            peer.id,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            if (peer.holding.isNullOrEmpty()) "未持有耳机" else "持有 ${peer.holding}",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Button(
+                            enabled = !peer.holding.isNullOrEmpty(),
+                            onClick = {
+                                SessionUi.hint = nativeCall {
+                                    val rc = EdifierNative.sessionGroupClaimPeer(session, peer.id)
+                                    if (rc != 0) {
+                                        EdifierNative.lastError()
+                                    } else {
+                                        "已向 ${peer.host} 请求接管"
+                                    }
+                                }
+                            },
+                        ) {
+                            Text(if (peer.holding.isNullOrEmpty()) "无法接管" else "接管音频")
+                        }
+                    }
+                }
             }
-        }) {
-            Text("接管音频")
         }
-        Text(log)
+        TextButton(onClick = { advanced = !advanced }) {
+            Text(if (advanced) "收起高级" else "用 MAC 接管")
+        }
+        if (advanced) {
+            OutlinedTextField(
+                value = mac,
+                onValueChange = { mac = it },
+                label = { Text("耳机 MAC") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(onClick = {
+                SessionUi.hint = nativeCall {
+                    val rc = EdifierNative.sessionGroupClaim(session, mac)
+                    if (rc != 0) EdifierNative.lastError() else "已请求接管 $mac"
+                }
+            }) { Text("接管") }
+        }
     }
 }
 
@@ -160,18 +362,43 @@ fun GroupScreen() {
 fun DebugScreen() {
     var payload by remember { mutableStateOf("""{"op":"query_battery"}""") }
     var log by remember { mutableStateOf("") }
-    Column(Modifier.padding(24.dp).verticalScroll(rememberScrollState())) {
-        Text("调试")
-        OutlinedTextField(value = payload, onValueChange = { payload = it }, label = { Text("JSON 或 hex") })
-        Button(onClick = { log = encode(payload) }) { Text("封装命令") }
-        Button(onClick = { log = nativeCall { EdifierNative.frameParse(payload) } }) { Text("解析帧") }
-        Text(log)
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(horizontal = 20.dp, vertical = 12.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("调试", style = MaterialTheme.typography.headlineSmall)
+        Text(
+            "封装命令或解析原始帧. 日常使用不用进这一页.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedTextField(
+            value = payload,
+            onValueChange = { payload = it },
+            label = { Text("JSON 或 hex") },
+            modifier = Modifier.fillMaxWidth(),
+            minLines = 3,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilledTonalButton(onClick = { log = encode(payload) }) { Text("封装命令") }
+            FilledTonalButton(onClick = {
+                log = nativeCall { EdifierNative.frameParse(payload) }
+            }) { Text("解析帧") }
+        }
+        if (log.isNotEmpty()) {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Text(log, Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall)
+            }
+        }
     }
 }
 
 private data class DeviceRow(val address: String, val name: String)
 
-private data class PeerRow(val id: String, val label: String)
+private data class PeerRow(val id: String, val host: String, val holding: String?)
 
 private fun parseDevices(json: String): List<DeviceRow> {
     return runCatching {
@@ -184,7 +411,8 @@ private fun parseDevices(json: String): List<DeviceRow> {
 }
 
 @Composable
-private fun EventLog(session: Long, onEvent: (String) -> Unit) {
+fun EventPump() {
+    val session = remember { EdifierNative.ensureSession() }
     LaunchedEffect(session) {
         if (session == 0L || !EdifierNative.loaded) {
             return@LaunchedEffect
@@ -192,19 +420,12 @@ private fun EventLog(session: Long, onEvent: (String) -> Unit) {
         while (true) {
             delay(250)
             val ev = runCatching { EdifierNative.sessionPollEvent(session) }.getOrNull() ?: continue
-            if (ev.contains("empty")) {
+            if (ev.contains("\"empty\"")) {
                 continue
             }
-            onEvent(ev)
+            SessionUi.applyEvent(ev)
         }
     }
-}
-
-private fun statusLine(): String {
-    if (!EdifierNative.loaded) {
-        return "尚未加载 libedifier_ffi.so"
-    }
-    return runCatching { "核心库 " + EdifierNative.version() }.getOrElse { it.message ?: "FFI 失败" }
 }
 
 private fun encode(json: String): String {
@@ -219,20 +440,22 @@ private fun sendOrEncode(session: Long, json: String): String {
         return encode(json)
     }
     val rc = runCatching { EdifierNative.sessionSendJson(session, json) }.getOrDefault(-1)
-    return if (rc == 0) "已发送 $json" else encode(json)
+    return if (rc == 0) "已发送" else encode(json)
 }
 
 private fun loadPeers(session: Long): List<PeerRow> {
     val json = nativeCall { EdifierNative.sessionGroupPeers(session) }
     return runCatching {
         val arr = JSONArray(json)
-        (0 until arr.length()).map { i ->
+        val map = linkedMapOf<String, PeerRow>()
+        for (i in 0 until arr.length()) {
             val o = arr.getJSONObject(i)
             val id = o.optString("id")
-            val host = o.optString("hostname", id)
-            val holding = if (o.isNull("holding")) null else o.optString("holding")
-            PeerRow(id, if (holding.isNullOrEmpty()) "$host  未持有" else "$host  holding=$holding")
+            val host = o.optString("hostname").ifBlank { id }
+            val holding = if (o.isNull("holding")) null else o.optString("holding").ifBlank { null }
+            map[id] = PeerRow(id, host, holding)
         }
+        map.values.toList()
     }.getOrDefault(emptyList())
 }
 

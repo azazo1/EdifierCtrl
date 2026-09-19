@@ -3,16 +3,14 @@ using Microsoft.UI.Xaml;
 namespace EdifierCtrl.Native;
 
 /// <summary>
-/// 把 session poll_event 拉到 UI 线程.
+/// 把 session poll_event 拉到 UI 线程, 写入 SessionState.
 /// </summary>
 internal sealed class EventPump
 {
     private readonly DispatcherTimer _timer;
-    private readonly Action<string> _onEvent;
 
-    public EventPump(Action<string> onEvent)
+    public EventPump()
     {
-        _onEvent = onEvent;
         _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         _timer.Tick += (_, _) => Drain();
     }
@@ -21,7 +19,7 @@ internal sealed class EventPump
 
     public void Stop() => _timer.Stop();
 
-    private void Drain()
+    private static void Drain()
     {
         try
         {
@@ -32,7 +30,7 @@ internal sealed class EventPump
                 {
                     break;
                 }
-                _onEvent(ev);
+                SessionState.ApplyEvent(ev);
             }
         }
         catch

@@ -2,14 +2,23 @@
     x:Class="EdifierCtrl.Pages.DebugPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <StackPanel Padding="24" Spacing="12">
-        <TextBlock Text="调试" Style="{StaticResource TitleTextBlockStyle}"/>
-        <TextBox x:Name="Payload" PlaceholderText="命令 JSON 或帧 hex"/>
-        <StackPanel Orientation="Horizontal" Spacing="8">
-            <Button Content="封装命令" Click="OnEncode"/>
-            <Button Content="解析帧" Click="OnParse"/>
-            <Button Content="取事件" Click="OnPoll"/>
+    <ScrollViewer>
+        <StackPanel Padding="28,20,28,24" Spacing="12">
+            <StackPanel Spacing="6">
+                <TextBlock Text="调试" Style="{StaticResource TitleTextBlockStyle}"/>
+                <TextBlock Text="封装命令或解析原始帧. 日常使用不用进这一页." Style="{StaticResource MutedText}"/>
+            </StackPanel>
+            <TextBox x:Name="Payload" Header="JSON 或 hex" PlaceholderText="命令 JSON 或帧 hex" MinHeight="88"
+                     AcceptsReturn="True" TextWrapping="Wrap"/>
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="封装命令" Click="OnEncode"/>
+                <Button Content="解析帧" Click="OnParse"/>
+                <Button Content="取事件" Click="OnPoll"/>
+            </StackPanel>
+            <Border Style="{StaticResource CardBorder}">
+                <TextBlock x:Name="Result" IsTextSelectionEnabled="True" TextWrapping="Wrap"
+                           FontFamily="Cascadia Mono, Consolas"/>
+            </Border>
         </StackPanel>
-        <TextBlock x:Name="Result" TextWrapping="Wrap"/>
-    </StackPanel>
+    </ScrollViewer>
 </Page>

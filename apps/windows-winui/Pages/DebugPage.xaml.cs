@@ -9,6 +9,7 @@ public sealed partial class DebugPage : Page
     public DebugPage()
     {
         InitializeComponent();
+        Payload.Text = """{"op":"query_battery"}""";
     }
 
     private void OnEncode(object sender, RoutedEventArgs e)

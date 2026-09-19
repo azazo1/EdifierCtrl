@@ -2,16 +2,50 @@
     x:Class="EdifierCtrl.Pages.GroupPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <StackPanel Padding="24" Spacing="12">
-        <TextBlock Text="组" Style="{StaticResource TitleTextBlockStyle}"/>
-        <TextBlock Text="加入后点某个成员, 会接管该成员正在持有的耳机." TextWrapping="Wrap"/>
-        <TextBox x:Name="Passphrase" PlaceholderText="组口令"/>
-        <Button Content="加入" Click="OnJoin"/>
-        <TextBlock x:Name="GroupId" TextWrapping="Wrap"/>
-        <Button Content="刷新成员" Click="OnRefresh"/>
-        <ListView x:Name="Peers" Height="160" IsItemClickEnabled="True" ItemClick="OnPeerClick"/>
-        <TextBox x:Name="Mac" PlaceholderText="耳机 MAC (成员未持有时用)"/>
-        <Button Content="接管音频" Click="OnClaim"/>
-        <TextBlock x:Name="Log" TextWrapping="Wrap"/>
-    </StackPanel>
+    <Grid Style="{StaticResource PageRoot}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <StackPanel Spacing="6">
+            <TextBlock Text="组" Style="{StaticResource TitleTextBlockStyle}"/>
+            <TextBlock Text="同一口令的电脑和手机在同一局域网. 点成员即可接管它正在用的耳机." Style="{StaticResource MutedText}"/>
+        </StackPanel>
+        <StackPanel Grid.Row="1" Spacing="10">
+            <TextBox x:Name="Passphrase" Header="组口令" PlaceholderText="例如 testhand"/>
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="加入" Click="OnJoin" Style="{StaticResource AccentButtonStyle}"/>
+                <Button Content="刷新" Click="OnRefresh"/>
+            </StackPanel>
+        </StackPanel>
+        <ListView
+            x:Name="Peers"
+            Grid.Row="2"
+            SelectionMode="None"
+            IsItemClickEnabled="True"
+            ItemClick="OnPeerClick">
+            <ListView.ItemTemplate>
+                <DataTemplate>
+                    <Border Style="{StaticResource CardBorder}" Margin="0,0,0,8">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="{Binding Host}" Style="{StaticResource SubtitleTextBlockStyle}"/>
+                            <TextBlock Text="{Binding Id}" Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock Text="{Binding HoldingText}"/>
+                            <TextBlock Text="{Binding ActionText}"
+                                       Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                        </StackPanel>
+                    </Border>
+                </DataTemplate>
+            </ListView.ItemTemplate>
+        </ListView>
+        <Expander Grid.Row="3" Header="用 MAC 接管" HorizontalAlignment="Stretch">
+            <StackPanel Spacing="8">
+                <TextBox x:Name="Mac" PlaceholderText="耳机 MAC"/>
+                <Button Content="接管" Click="OnClaim"/>
+            </StackPanel>
+        </Expander>
+    </Grid>
 </Page>

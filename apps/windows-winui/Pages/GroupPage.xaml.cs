@@ -2,37 +2,50 @@ using System.Text.Json;
 using EdifierCtrl.Native;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Navigation;
+using Windows.Storage;
 
 namespace EdifierCtrl.Pages;
 
 public sealed partial class GroupPage : Page
 {
     private DispatcherTimer? _timer;
-    private bool _joined;
 
     public GroupPage()
     {
         InitializeComponent();
-    }
-
-    protected override void OnNavigatedTo(NavigationEventArgs e)
-    {
-        _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-        _timer.Tick += (_, _) =>
+        try
         {
-            if (_joined)
+            var saved = ApplicationData.Current.LocalSettings.Values["passphrase"] as string;
+            if (!string.IsNullOrEmpty(saved))
+            {
+                Passphrase.Text = saved;
+            }
+        }
+        catch
+        {
+            // unpackaged 仍可用 LocalSettings; 失败就空着.
+        }
+        Loaded += (_, _) =>
+        {
+            _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+            _timer.Tick += (_, _) =>
+            {
+                if (SessionState.GroupJoined)
+                {
+                    RefreshPeers();
+                }
+            };
+            _timer.Start();
+            if (SessionState.GroupJoined)
             {
                 RefreshPeers();
             }
         };
-        _timer.Start();
-    }
-
-    protected override void OnNavigatedFrom(NavigationEventArgs e)
-    {
-        _timer?.Stop();
-        _timer = null;
+        Unloaded += (_, _) =>
+        {
+            _timer?.Stop();
+            _timer = null;
+        };
     }
 
     private void OnJoin(object sender, RoutedEventArgs e)
@@ -41,17 +54,22 @@ public sealed partial class GroupPage : Page
         {
             EdifierNative.EnsureSession();
             EdifierNative.GroupJoin(Passphrase.Text);
-            GroupId.Text = "group_id=" + EdifierNative.GroupIdHex();
-            var holding = EdifierNative.Holding();
-            Log.Text = string.IsNullOrEmpty(holding)
-                ? "已加入组. 点成员接管其耳机."
-                : "已加入组. 本机 holding=" + holding;
-            _joined = true;
+            try
+            {
+                ApplicationData.Current.LocalSettings.Values["passphrase"] = Passphrase.Text;
+            }
+            catch
+            {
+                // 记不住口令也不挡加入.
+            }
+            SessionState.GroupJoined = true;
+            SessionState.Holding = EdifierNative.Holding();
+            SessionState.SetHint("已加入组. 点成员接管其耳机.");
             RefreshPeers();
         }
         catch (Exception ex)
         {
-            Log.Text = ex.Message;
+            SessionState.SetHint(ex.Message);
         }
     }
 
@@ -61,42 +79,62 @@ public sealed partial class GroupPage : Page
     {
         try
         {
-            Peers.Items.Clear();
+            var map = new Dictionary<string, PeerItem>(StringComparer.Ordinal);
             using var doc = JsonDocument.Parse(EdifierNative.GroupPeers());
             foreach (var item in doc.RootElement.EnumerateArray())
             {
                 var id = item.GetProperty("id").GetString() ?? "";
                 var host = item.TryGetProperty("hostname", out var h) ? h.GetString() ?? id : id;
+                if (string.IsNullOrWhiteSpace(host))
+                {
+                    host = id;
+                }
                 var holding = item.TryGetProperty("holding", out var hold) && hold.ValueKind == JsonValueKind.String
                     ? hold.GetString()
                     : null;
-                Peers.Items.Add(new PeerItem
+                map[id] = new PeerItem
                 {
                     Id = id,
-                    Label = holding is null ? $"{host}  未持有" : $"{host}  holding={holding}",
-                });
+                    Host = host,
+                    Holding = holding,
+                    HoldingText = string.IsNullOrEmpty(holding) ? "未持有耳机" : "持有 " + holding,
+                    ActionText = string.IsNullOrEmpty(holding) ? "无法接管" : "点按接管音频",
+                };
             }
+            Peers.ItemsSource = map.Values.ToList();
         }
         catch (Exception ex)
         {
-            Log.Text = ex.Message;
+            SessionState.SetHint(ex.Message);
         }
     }
 
-    private void OnPeerClick(object sender, ItemClickEventArgs e)
+    private async void OnPeerClick(object sender, ItemClickEventArgs e)
     {
         if (e.ClickedItem is not PeerItem peer)
         {
             return;
         }
+        if (string.IsNullOrEmpty(peer.Holding))
+        {
+            var dlg = new ContentDialog
+            {
+                Title = peer.Host,
+                Content = "这个成员现在没有持有耳机, 没法接管.",
+                CloseButtonText = "好",
+                XamlRoot = XamlRoot,
+            };
+            await dlg.ShowAsync();
+            return;
+        }
         try
         {
             EdifierNative.GroupClaimPeer(peer.Id);
-            Log.Text = "已向 " + peer.Label + " 请求接管";
+            SessionState.SetHint("已向 " + peer.Host + " 请求接管");
         }
         catch (Exception ex)
         {
-            Log.Text = ex.Message;
+            SessionState.SetHint(ex.Message);
         }
     }
 
@@ -105,18 +143,20 @@ public sealed partial class GroupPage : Page
         try
         {
             EdifierNative.GroupClaim(Mac.Text);
-            Log.Text = "已请求接管 " + Mac.Text;
+            SessionState.SetHint("已请求接管 " + Mac.Text);
         }
         catch (Exception ex)
         {
-            Log.Text = ex.Message;
+            SessionState.SetHint(ex.Message);
         }
     }
 
     private sealed class PeerItem
     {
         public required string Id { get; init; }
-        public required string Label { get; init; }
-        public override string ToString() => Label;
+        public required string Host { get; init; }
+        public string? Holding { get; init; }
+        public required string HoldingText { get; init; }
+        public required string ActionText { get; init; }
     }
 }
