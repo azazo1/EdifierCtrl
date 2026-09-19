@@ -17,6 +17,19 @@ internal static class SessionState
     public static bool GroupJoined { get; set; }
     public static string? Holding { get; set; }
     public static string? Noise { get; set; }
+    public static string? Mac { get; private set; }
+    public static string? Firmware { get; private set; }
+    public static int AmbientVolume { get; set; }
+    public static string? Effect { get; set; }
+    public static bool GameMode { get; set; }
+    public static string? Ldac { get; set; }
+    public static int PromptVolume { get; set; } = 7;
+    public static bool ShutdownOn { get; set; }
+    public static int ShutdownMinutes { get; set; } = 5;
+    public static bool AutoPowerOff { get; set; }
+    public static bool ControlNormal { get; set; } = true;
+    public static bool ControlReduction { get; set; } = true;
+    public static bool ControlAmbient { get; set; } = true;
 
     public static string StatusLine()
     {
@@ -105,14 +118,78 @@ internal static class SessionState
                 break;
             case "noise":
                 Noise = n.GetProperty("mode").GetString();
+                if (n.TryGetProperty("ambient_volume", out var av) && av.TryGetInt32(out var vol))
+                {
+                    AmbientVolume = vol;
+                }
                 Hint = "降噪 " + NoiseLabel(Noise);
                 break;
             case "name":
                 DeviceName = n.GetProperty("name").GetString();
                 Hint = "耳机 " + DeviceName;
                 break;
+            case "mac":
+                Mac = n.GetProperty("address").GetString();
+                Hint = "MAC " + Mac;
+                break;
+            case "firmware":
+                Firmware = n.GetProperty("version").GetString();
+                Hint = "固件 " + Firmware;
+                break;
+            case "sound_effect":
+                Effect = n.GetProperty("effect").GetString();
+                Hint = "音效 " + EffectLabel(Effect);
+                break;
+            case "game_mode":
+                GameMode = n.GetProperty("on").GetBoolean();
+                Hint = GameMode ? "游戏模式开" : "游戏模式关";
+                break;
+            case "ldac":
+                Ldac = n.GetProperty("mode").GetString();
+                Hint = "LDAC " + LdacLabel(Ldac);
+                break;
+            case "prompt_volume":
+                PromptVolume = n.GetProperty("volume").GetInt32();
+                Hint = "提示音量 " + PromptVolume;
+                break;
+            case "shutdown_timer_enabled":
+                ShutdownOn = n.GetProperty("on").GetBoolean();
+                Hint = ShutdownOn ? "定时关机开" : "定时关机关";
+                break;
+            case "shutdown_timer":
+                ShutdownOn = true;
+                ShutdownMinutes = Math.Clamp(n.GetProperty("minutes").GetInt32(), 1, 180);
+                Hint = "定时关机 " + ShutdownMinutes + " 分钟";
+                break;
+            case "auto_power_off":
+                AutoPowerOff = n.GetProperty("on").GetBoolean();
+                Hint = AutoPowerOff ? "自动关机开" : "自动关机关";
+                break;
+            case "control_settings":
+                ControlNormal = n.GetProperty("normal").GetBoolean();
+                ControlReduction = n.GetProperty("reduction").GetBoolean();
+                ControlAmbient = n.GetProperty("ambient").GetBoolean();
+                Hint = "按键可切换模式已更新";
+                break;
         }
     }
+
+    public static string EffectLabel(string? effect) => effect switch
+    {
+        "normal" => "标准",
+        "pop" => "流行",
+        "classical" => "古典",
+        "rock" => "摇滚",
+        _ => effect ?? "未知",
+    };
+
+    public static string LdacLabel(string? mode) => mode switch
+    {
+        "off" => "关闭",
+        "rate48k" => "44.1k / 48k",
+        "rate96k" => "96k",
+        _ => mode ?? "未知",
+    };
 
     private static string HandoffText(JsonElement p)
     {

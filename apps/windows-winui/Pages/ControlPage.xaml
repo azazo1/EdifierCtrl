@@ -8,17 +8,127 @@
                 <TextBlock Text="控制" Style="{StaticResource TitleTextBlockStyle}"/>
                 <TextBlock x:Name="Lead" Text="先到设备页连接耳机." Style="{StaticResource MutedText}"/>
             </StackPanel>
-            <TextBlock Text="降噪模式" Style="{StaticResource SubtitleTextBlockStyle}"/>
-            <RadioButtons x:Name="Modes" MaxColumns="3">
-                <RadioButton Content="关闭" Tag="normal" Click="OnModeClick"/>
-                <RadioButton Content="降噪" Tag="reduction" Click="OnModeClick"/>
-                <RadioButton Content="通透" Tag="ambient" Click="OnModeClick"/>
-            </RadioButtons>
-            <StackPanel Orientation="Horizontal" Spacing="8">
-                <Button Content="查电量" Click="OnBattery"/>
-                <Button Content="读取状态" Click="OnReadout"/>
-            </StackPanel>
-            <Button Content="断开当前主机" Click="OnDisconnectHost"/>
+
+            <Border Style="{StaticResource CardBorder}">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="信息" Style="{StaticResource SubtitleTextBlockStyle}"/>
+                    <TextBlock x:Name="InfoBattery" Text="电量 -"/>
+                    <TextBlock x:Name="InfoMac" Text="MAC -"/>
+                    <TextBlock x:Name="InfoFirmware" Text="固件 -"/>
+                    <Button Content="读取全部" Click="OnReadout"/>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardBorder}">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="名称" Style="{StaticResource SubtitleTextBlockStyle}"/>
+                    <TextBlock Text="改完要删配对记录再配对才生效." Style="{StaticResource MutedText}"/>
+                    <TextBox x:Name="NameBox" PlaceholderText="耳机名"/>
+                    <Button Content="设置名称" Click="OnSetName"/>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardBorder}">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="降噪" Style="{StaticResource SubtitleTextBlockStyle}"/>
+                    <RadioButtons x:Name="Modes" MaxColumns="3">
+                        <RadioButton Content="关闭" Tag="normal" Click="OnModeClick"/>
+                        <RadioButton Content="降噪" Tag="reduction" Click="OnModeClick"/>
+                        <RadioButton Content="通透" Tag="ambient" Click="OnModeClick"/>
+                    </RadioButtons>
+                    <TextBlock Text="通透音量" Style="{StaticResource SubtitleTextBlockStyle}"/>
+                    <Slider x:Name="Ambient" Minimum="-3" Maximum="3" StepFrequency="1" TickFrequency="1"/>
+                    <Button Content="应用通透音量" Click="OnAmbient"/>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardBorder}">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="按键可切换的模式" Style="{StaticResource SubtitleTextBlockStyle}"/>
+                    <TextBlock Text="至少选 2 项." Style="{StaticResource MutedText}"/>
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <CheckBox x:Name="CsNormal" Content="关闭" Click="OnControl"/>
+                        <CheckBox x:Name="CsReduction" Content="降噪" Click="OnControl"/>
+                        <CheckBox x:Name="CsAmbient" Content="通透" Click="OnControl"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardBorder}">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="音效" Style="{StaticResource SubtitleTextBlockStyle}"/>
+                    <RadioButtons MaxColumns="4">
+                        <RadioButton Content="标准" Tag="normal" Click="OnEffectClick"/>
+                        <RadioButton Content="流行" Tag="pop" Click="OnEffectClick"/>
+                        <RadioButton Content="古典" Tag="classical" Click="OnEffectClick"/>
+                        <RadioButton Content="摇滚" Tag="rock" Click="OnEffectClick"/>
+                    </RadioButtons>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardBorder}">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="提示音量" Style="{StaticResource SubtitleTextBlockStyle}"/>
+                    <Slider x:Name="Prompt" Minimum="0" Maximum="15" StepFrequency="1"/>
+                    <Button Content="应用提示音量" Click="OnPrompt"/>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardBorder}">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="定时关机" Style="{StaticResource SubtitleTextBlockStyle}"/>
+                    <TextBlock Text="断电后会回到默认." Style="{StaticResource MutedText}"/>
+                    <ToggleSwitch x:Name="ShutdownSwitch" OffContent="关闭" OnContent="开启" Toggled="OnShutdownToggle"/>
+                    <Slider x:Name="ShutdownMinutes" Minimum="1" Maximum="180" StepFrequency="1" Value="5"/>
+                    <Button Content="应用定时" Click="OnShutdownSet"/>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardBorder}">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="LDAC" Style="{StaticResource SubtitleTextBlockStyle}"/>
+                    <TextBlock Text="改完要重新配对才生效, 同时会关掉定时关机." Style="{StaticResource MutedText}"/>
+                    <RadioButtons MaxColumns="3">
+                        <RadioButton Content="关闭" Tag="off" Click="OnLdacClick"/>
+                        <RadioButton Content="44.1k / 48k" Tag="rate48k" Click="OnLdacClick"/>
+                        <RadioButton Content="96k" Tag="rate96k" Click="OnLdacClick"/>
+                    </RadioButtons>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardBorder}">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="开关" Style="{StaticResource SubtitleTextBlockStyle}"/>
+                    <ToggleSwitch x:Name="GameMode" Header="游戏模式" OffContent="关" OnContent="开" Toggled="OnGameMode"/>
+                    <ToggleSwitch x:Name="AutoOff" Header="无音频 30 分钟自动关机" OffContent="关" OnContent="开" Toggled="OnAutoOff"/>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardBorder}">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="播放" Style="{StaticResource SubtitleTextBlockStyle}"/>
+                    <VariableSizedWrapGrid MaximumRowsOrColumns="3" Orientation="Horizontal" ItemWidth="120">
+                        <Button Content="播放" Tag="play" Click="OnPlayback" Margin="0,0,8,8"/>
+                        <Button Content="暂停" Tag="pause" Click="OnPlayback" Margin="0,0,8,8"/>
+                        <Button Content="上一曲" Tag="previous" Click="OnPlayback" Margin="0,0,8,8"/>
+                        <Button Content="下一曲" Tag="next" Click="OnPlayback" Margin="0,0,8,8"/>
+                        <Button Content="音量+" Tag="volume_up" Click="OnPlayback" Margin="0,0,8,8"/>
+                        <Button Content="音量-" Tag="volume_down" Click="OnPlayback" Margin="0,0,8,8"/>
+                    </VariableSizedWrapGrid>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardBorder}">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="危险操作" Style="{StaticResource SubtitleTextBlockStyle}"/>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Content="断开主机" Click="OnDisconnectHost"/>
+                        <Button Content="关机" Click="OnPowerOff"/>
+                        <Button Content="重新配对" Click="OnRePair"/>
+                        <Button Content="恢复出厂" Click="OnFactoryReset"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
         </StackPanel>
     </ScrollViewer>
 </Page>

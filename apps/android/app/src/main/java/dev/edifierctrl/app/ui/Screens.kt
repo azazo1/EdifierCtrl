@@ -3,8 +3,6 @@ package dev.edifierctrl.app.ui
 import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -15,9 +13,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
@@ -163,81 +159,6 @@ fun DeviceScreen() {
                     }
                 }
             }
-        }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-fun ControlScreen() {
-    var confirmCd by remember { mutableStateOf(false) }
-    val session = remember { EdifierNative.ensureSession() }
-    val modes = listOf("normal" to "关闭", "reduction" to "降噪", "ambient" to "通透")
-    Column(
-        Modifier
-            .fillMaxSize()
-            .padding(horizontal = 20.dp, vertical = 12.dp)
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text("控制", style = MaterialTheme.typography.headlineSmall)
-        Text(
-            if (SessionUi.connected) "改降噪或查电量会发到已连接的耳机." else "先到设备页连接耳机.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        StatusBanner()
-        Text("降噪模式", style = MaterialTheme.typography.titleMedium)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            modes.forEach { (mode, label) ->
-                FilterChip(
-                    selected = SessionUi.noise == mode,
-                    onClick = {
-                        SessionUi.noise = mode
-                        SessionUi.hint = sendOrEncode(
-                            session,
-                            """{"op":"set_noise_mode","mode":"$mode"}""",
-                        )
-                    },
-                    label = { Text(label) },
-                )
-            }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilledTonalButton(onClick = {
-                SessionUi.hint = sendOrEncode(session, """{"op":"query_battery"}""")
-            }) { Text("查电量") }
-            FilledTonalButton(onClick = {
-                SessionUi.hint = nativeCall {
-                    val rc = EdifierNative.sessionReadout(session, "basedevice")
-                    if (rc != 0) EdifierNative.lastError() else "已请求读取状态"
-                }
-            }) { Text("读取状态") }
-        }
-        Button(
-            onClick = { confirmCd = true },
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.error,
-                contentColor = MaterialTheme.colorScheme.onError,
-            ),
-        ) {
-            Text("断开当前主机")
-        }
-        if (confirmCd) {
-            AlertDialog(
-                onDismissRequest = { confirmCd = false },
-                title = { Text("断开当前主机") },
-                text = { Text("会给耳机发 CD, 当前正在播放的设备会掉线. 局域网交接失败时会自动发, 这里是手动.") },
-                confirmButton = {
-                    Button(onClick = {
-                        confirmCd = false
-                        SessionUi.hint = sendOrEncode(session, """{"op":"disconnect_host"}""")
-                    }) { Text("发送") }
-                },
-                dismissButton = {
-                    TextButton(onClick = { confirmCd = false }) { Text("取消") }
-                },
-            )
         }
     }
 }
@@ -428,21 +349,6 @@ fun EventPump() {
     }
 }
 
-private fun encode(json: String): String {
-    if (!EdifierNative.loaded) {
-        return "尚未加载 libedifier_ffi.so"
-    }
-    return EdifierNative.commandEncode(json) ?: (EdifierNative.lastError() ?: "编码失败")
-}
-
-private fun sendOrEncode(session: Long, json: String): String {
-    if (!EdifierNative.loaded || session == 0L) {
-        return encode(json)
-    }
-    val rc = runCatching { EdifierNative.sessionSendJson(session, json) }.getOrDefault(-1)
-    return if (rc == 0) "已发送" else encode(json)
-}
-
 private fun loadPeers(session: Long): List<PeerRow> {
     val json = nativeCall { EdifierNative.sessionGroupPeers(session) }
     return runCatching {
@@ -457,11 +363,4 @@ private fun loadPeers(session: Long): List<PeerRow> {
         }
         map.values.toList()
     }.getOrDefault(emptyList())
-}
-
-private fun nativeCall(block: () -> String?): String {
-    if (!EdifierNative.loaded) {
-        return "尚未加载 libedifier_ffi.so"
-    }
-    return runCatching { block() ?: (EdifierNative.lastError() ?: "") }.getOrElse { it.message ?: "FFI 失败" }
 }

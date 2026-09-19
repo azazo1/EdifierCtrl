@@ -1,6 +1,7 @@
 package dev.edifierctrl.app.ui
 
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import org.json.JSONObject
@@ -11,10 +12,23 @@ object SessionUi {
     var address by mutableStateOf<String?>(null)
     var deviceName by mutableStateOf<String?>(null)
     var battery by mutableStateOf<Int?>(null)
+    var mac by mutableStateOf<String?>(null)
+    var firmware by mutableStateOf<String?>(null)
     var hint by mutableStateOf("扫描已配对的耳机, 点卡片连接.")
     var groupJoined by mutableStateOf(false)
     var holding by mutableStateOf<String?>(null)
     var noise by mutableStateOf<String?>(null)
+    var ambientVolume by mutableIntStateOf(0)
+    var effect by mutableStateOf<String?>(null)
+    var gameMode by mutableStateOf(false)
+    var ldac by mutableStateOf<String?>(null)
+    var promptVolume by mutableIntStateOf(7)
+    var shutdownOn by mutableStateOf(false)
+    var shutdownMinutes by mutableIntStateOf(5)
+    var autoPowerOff by mutableStateOf(false)
+    var controlNormal by mutableStateOf(true)
+    var controlReduction by mutableStateOf(true)
+    var controlAmbient by mutableStateOf(true)
 
     fun statusLine(): String {
         val name = deviceName?.ifBlank { null } ?: address ?: "未连接耳机"
@@ -37,24 +51,7 @@ object SessionUi {
                 }
                 hint = if (connected) "控制通道已连接" else "控制通道已断开"
             }
-            "headset" -> {
-                val n = o.optJSONObject("notification") ?: return
-                when (n.optString("kind")) {
-                    "battery" -> {
-                        battery = n.optInt("percent")
-                        hint = "电量 ${battery}%"
-                    }
-                    "noise" -> {
-                        noise = n.optString("mode")
-                        hint = "降噪 ${noiseLabel(noise)}"
-                    }
-                    "name" -> {
-                        deviceName = n.optString("name")
-                        hint = "耳机 $deviceName"
-                    }
-                    else -> Unit
-                }
-            }
+            "headset" -> applyHeadset(o.optJSONObject("notification") ?: return)
             "handoff" -> {
                 val p = o.optJSONObject("progress") ?: return
                 hint = when (p.optString("kind")) {
@@ -85,11 +82,89 @@ object SessionUi {
             }
         }
     }
+
+    private fun applyHeadset(n: JSONObject) {
+        when (n.optString("kind")) {
+            "battery" -> {
+                battery = n.optInt("percent")
+                hint = "电量 ${battery}%"
+            }
+            "noise" -> {
+                noise = n.optString("mode")
+                if (n.has("ambient_volume")) {
+                    ambientVolume = n.optInt("ambient_volume")
+                }
+                hint = "降噪 ${noiseLabel(noise)}"
+            }
+            "name" -> {
+                deviceName = n.optString("name")
+                hint = "耳机 $deviceName"
+            }
+            "mac" -> {
+                mac = n.optString("address")
+                hint = "MAC $mac"
+            }
+            "firmware" -> {
+                firmware = n.optString("version")
+                hint = "固件 $firmware"
+            }
+            "sound_effect" -> {
+                effect = n.optString("effect")
+                hint = "音效 ${effectLabel(effect)}"
+            }
+            "game_mode" -> {
+                gameMode = n.optBoolean("on")
+                hint = if (gameMode) "游戏模式开" else "游戏模式关"
+            }
+            "ldac" -> {
+                ldac = n.optString("mode")
+                hint = "LDAC ${ldacLabel(ldac)}"
+            }
+            "prompt_volume" -> {
+                promptVolume = n.optInt("volume")
+                hint = "提示音量 $promptVolume"
+            }
+            "shutdown_timer_enabled" -> {
+                shutdownOn = n.optBoolean("on")
+                hint = if (shutdownOn) "定时关机开" else "定时关机关"
+            }
+            "shutdown_timer" -> {
+                shutdownOn = true
+                shutdownMinutes = n.optInt("minutes").coerceIn(1, 180)
+                hint = "定时关机 ${shutdownMinutes} 分钟"
+            }
+            "auto_power_off" -> {
+                autoPowerOff = n.optBoolean("on")
+                hint = if (autoPowerOff) "自动关机开" else "自动关机关"
+            }
+            "control_settings" -> {
+                controlNormal = n.optBoolean("normal")
+                controlReduction = n.optBoolean("reduction")
+                controlAmbient = n.optBoolean("ambient")
+                hint = "按键可切换模式已更新"
+            }
+        }
+    }
 }
 
 fun noiseLabel(mode: String?): String = when (mode) {
     "normal" -> "关闭"
     "reduction" -> "降噪"
     "ambient" -> "通透"
+    else -> mode ?: "未知"
+}
+
+fun effectLabel(effect: String?): String = when (effect) {
+    "normal" -> "标准"
+    "pop" -> "流行"
+    "classical" -> "古典"
+    "rock" -> "摇滚"
+    else -> effect ?: "未知"
+}
+
+fun ldacLabel(mode: String?): String = when (mode) {
+    "off" -> "关闭"
+    "rate48k" -> "44.1k / 48k"
+    "rate96k" -> "96k"
     else -> mode ?: "未知"
 }
