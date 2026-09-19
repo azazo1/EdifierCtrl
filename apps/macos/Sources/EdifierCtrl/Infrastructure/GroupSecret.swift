@@ -1,75 +1,56 @@
+import Darwin
 import Foundation
-import Security
 
-/// 口令只进入 Keychain, service 使用数据目录摘要隔离正式, 调试和 fake 实例.
+/// 组口令随数据目录隔离, 只允许当前用户读取, 不访问钥匙串.
 enum GroupSecret {
-    private static var baseQuery: [String: Any] {
-        [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "EdifierCtrl.group." + AppPaths.instanceIdentifier,
-            kSecAttrAccount as String: "group-passphrase",
-            kSecAttrSynchronizable as String: false,
-        ]
-    }
-
-    static func load() throws -> String? {
-        var query = baseQuery
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecItemNotFound { return nil }
-        try requireSuccess(status, operation: "读取组口令")
-        guard let data = result as? Data, let secret = String(data: data, encoding: .utf8) else {
-            throw SecretError.invalidData
+    static func load(from directory: URL = AppPaths.dataDirectory) throws -> String? {
+        let data: Data
+        do {
+            data = try Data(contentsOf: file(in: directory))
+        } catch CocoaError.fileReadNoSuchFile {
+            return nil
         }
-        return secret
+        return try GroupSecretFormat.decode(data).passphrase
     }
 
-    static func save(_ secret: String) throws {
+    static func save(_ secret: String, in directory: URL = AppPaths.dataDirectory) throws {
         if secret.isEmpty {
-            try delete()
+            try delete(in: directory)
             return
         }
-        let data = Data(secret.utf8)
-        let status = SecItemUpdate(baseQuery as CFDictionary, [kSecValueData as String: data] as CFDictionary)
-        if status == errSecItemNotFound {
-            var query = baseQuery
-            query[kSecValueData as String] = data
-            query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-            try requireSuccess(SecItemAdd(query as CFDictionary, nil), operation: "保存组口令")
-        } else {
-            try requireSuccess(status, operation: "更新组口令")
+        // 无法读取的格式必须保留, 不能用当前版本静默覆盖.
+        _ = try load(from: directory)
+        let manager = FileManager.default
+        try manager.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let data = try JSONEncoder().encode(GroupSecretDocument(passphrase: secret))
+        let temporary = directory.appendingPathComponent(".group-secret-\(UUID().uuidString).tmp")
+        guard manager.createFile(atPath: temporary.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
+            throw CocoaError(.fileWriteUnknown)
         }
-        AppLog.info("组口令已保存至 Keychain.", category: "keychain")
-    }
-
-    static func delete() throws {
-        let status = SecItemDelete(baseQuery as CFDictionary)
-        guard status != errSecItemNotFound else { return }
-        try requireSuccess(status, operation: "删除组口令")
-        AppLog.info("已删除 Keychain 组口令.", category: "keychain")
-    }
-
-    private static func requireSuccess(_ status: OSStatus, operation: String) throws {
-        guard status != errSecSuccess else { return }
-        let error = SecretError.keychain(operation, status)
-        AppLog.error(error.localizedDescription, category: "keychain")
-        throw error
-    }
-
-    enum SecretError: LocalizedError {
-        case keychain(String, OSStatus)
-        case invalidData
-
-        var errorDescription: String? {
-            switch self {
-            case let .keychain(operation, status):
-                let reason = SecCopyErrorMessageString(status, nil) as String? ?? "未知 Keychain 错误"
-                return "\(operation)失败: \(reason) (\(status))."
-            case .invalidData:
-                return "Keychain 中的组口令格式无效."
+        defer { try? manager.removeItem(at: temporary) }
+        let handle = try FileHandle(forWritingTo: temporary)
+        defer { try? handle.close() }
+        try handle.synchronize()
+        // 同目录 rename 原子替换, 保持新文件的 0600 权限.
+        let status = temporary.withUnsafeFileSystemRepresentation { source in
+            file(in: directory).withUnsafeFileSystemRepresentation { destination in
+                rename(source!, destination!)
             }
         }
+        guard status == 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+        AppLog.info("组口令已保存至当前数据目录.", category: "group-secret")
+    }
+
+    static func delete(in directory: URL = AppPaths.dataDirectory) throws {
+        do {
+            try FileManager.default.removeItem(at: file(in: directory))
+        } catch CocoaError.fileNoSuchFile {
+            return
+        }
+        AppLog.info("已删除当前数据目录中的组口令.", category: "group-secret")
+    }
+
+    static func file(in directory: URL) -> URL {
+        directory.appendingPathComponent("group-secret.json")
     }
 }

@@ -42,16 +42,14 @@ struct HeadphonesView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
-                Surface {
-                    DisclosureGroup("设备维护") {
-                        VStack(alignment: .leading, spacing: 16) {
-                            Text("这些操作会中断当前连接. 恢复出厂还会清除耳机配对记录.").font(.caption).foregroundStyle(.secondary)
-                            HStack(spacing: 10) {
-                                ForEach(HeadphoneAction.allCases) { action in
-                                    Button(action.title) { danger = action }.disabled(!model.canControl)
-                                }
+                DisclosureGroup("设备维护") {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("这些操作会中断当前连接. 恢复出厂还会清除耳机配对记录.").font(.caption).foregroundStyle(.secondary)
+                        HStack(spacing: 10) {
+                            ForEach(HeadphoneAction.allCases) { action in
+                                Button(action.title) { danger = action }.disabled(!model.canControl)
                             }
-                        }.padding(.top, 14)
+                        }
                     }
                 }
             } else {
@@ -163,6 +161,7 @@ struct HeadphonesView: View {
         Button { model.send("playback", values: ["action": action], label: label) } label: {
             Image(systemName: symbol).font(.system(size: 14)).frame(width: 40, height: 38)
                 .background(Palette.canvas, in: RoundedRectangle(cornerRadius: 10))
+                .contentShape(RoundedRectangle(cornerRadius: 10))
         }.buttonStyle(.plain).help(label).accessibilityLabel(label)
     }
 

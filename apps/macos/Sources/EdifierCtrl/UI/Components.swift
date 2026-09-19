@@ -48,7 +48,7 @@ struct Surface<Content: View>: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(padding)
             .background(Palette.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 20).stroke(Palette.border, lineWidth: 1))
+            .overlay(RoundedRectangle(cornerRadius: 20).stroke(Palette.border, lineWidth: 1).allowsHitTesting(false))
     }
 }
 
@@ -100,6 +100,7 @@ struct ActionStyle: ButtonStyle {
         configuration.label
             .font(.system(size: 13, weight: .semibold))
             .padding(.horizontal, 16).padding(.vertical, 10)
+            .contentShape(RoundedRectangle(cornerRadius: 10))
             .foregroundStyle(prominent ? Color.white : Palette.accent)
             .background(prominent ? Palette.accent : Palette.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
             .opacity(!isEnabled ? 0.4 : configuration.isPressed ? 0.75 : 1)

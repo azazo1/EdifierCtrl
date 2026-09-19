@@ -24,33 +24,31 @@ struct HeadphoneSettingsView: View {
                     }
                 }
             }
-            Surface {
-                DisclosureGroup {
-                    VStack(alignment: .leading, spacing: 22) {
-                        if supports("game_mode") {
-                            settingToggle("低延迟游戏模式", detail: "适合游戏与视频通话", value: model.state.gameMode) {
-                                model.send("set_game_mode", values: ["on": $0], label: "设置游戏模式", query: "query_game_mode")
-                            }
+            DisclosureGroup {
+                VStack(alignment: .leading, spacing: 22) {
+                    if supports("game_mode") {
+                        settingToggle("低延迟游戏模式", detail: "适合游戏与视频通话", value: model.state.gameMode) {
+                            model.send("set_game_mode", values: ["on": $0], label: "设置游戏模式", query: "query_game_mode")
                         }
-                        if supports("auto_power_off") {
-                            settingToggle("空闲自动关机", detail: "由耳机管理待机耗电", value: model.state.autoPowerOff) {
-                                model.send("set_auto_power_off", values: ["on": $0], label: "设置自动关机", query: "query_auto_power_off")
-                            }
+                    }
+                    if supports("auto_power_off") {
+                        settingToggle("空闲自动关机", detail: "由耳机管理待机耗电", value: model.state.autoPowerOff) {
+                            model.send("set_auto_power_off", values: ["on": $0], label: "设置自动关机", query: "query_auto_power_off")
                         }
-                        if supports("prompt_volume") {
-                            Divider()
-                            LevelControl(title: "提示音量", detail: "耳机开关机与模式切换提示", value: model.state.promptVolume, range: 0...15, enabled: model.canControl) {
-                                model.send("set_prompt_volume", values: ["volume": $0], label: "设置提示音量", query: "query_prompt_volume")
-                            }
+                    }
+                    if supports("prompt_volume") {
+                        Divider()
+                        LevelControl(title: "提示音量", detail: "耳机开关机与模式切换提示", value: model.state.promptVolume, range: 0...15, enabled: model.canControl) {
+                            model.send("set_prompt_volume", values: ["volume": $0], label: "设置提示音量", query: "query_prompt_volume")
                         }
-                        if supports("shutdown_timer") { timerSettings }
-                        if supports("control_settings") { buttonSettings }
-                        if supports("ldac") { ldacSettings }
-                        if supports("name") { nameSettings }
-                    }.padding(.top, 24)
-                } label: {
-                    SectionHeading(title: "更多耳机设置", detail: "提示音, 定时关机与按键偏好")
+                    }
+                    if supports("shutdown_timer") { timerSettings }
+                    if supports("control_settings") { buttonSettings }
+                    if supports("ldac") { ldacSettings }
+                    if supports("name") { nameSettings }
                 }
+            } label: {
+                SectionHeading(title: "更多耳机设置", detail: "提示音, 定时关机与按键偏好")
             }
         }
         .onAppear { synchronizeControls() }
@@ -76,6 +74,7 @@ struct HeadphoneSettingsView: View {
             .frame(maxWidth: .infinity).padding(.vertical, 18)
             .foregroundStyle(model.state.effect == value ? Palette.accent : Color.secondary)
             .background(model.state.effect == value ? Palette.accent.opacity(0.09) : Palette.canvas, in: RoundedRectangle(cornerRadius: 12))
+            .contentShape(RoundedRectangle(cornerRadius: 12))
         }.buttonStyle(.plain).accessibilityValue(model.state.effect == value ? "已选中" : "未选中")
     }
 

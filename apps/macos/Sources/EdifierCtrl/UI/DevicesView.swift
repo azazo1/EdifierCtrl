@@ -47,19 +47,17 @@ struct DevicesView: View {
                     deviceRow(device)
                 }
             }
-            Surface {
-                DisclosureGroup("使用蓝牙地址连接") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("适用于已经配对但未出现在列表中的经典蓝牙耳机. 当前 macOS 端使用 RFCOMM 控制通道.")
-                            .font(.caption).foregroundStyle(.secondary)
-                        HStack {
-                            TextField("AA:BB:CC:DD:EE:FF", text: $address).textFieldStyle(.roundedBorder)
-                                .font(.system(.body, design: .monospaced))
-                                .onSubmit { if BluetoothAddress.normalize(address) != nil { model.connect(address: address) } }
-                            Button("连接") { model.connect(address: address) }
-                                .disabled(BluetoothAddress.normalize(address) == nil || !model.ready || model.busy)
-                        }
-                    }.padding(.top, 14)
+            DisclosureGroup("使用蓝牙地址连接") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("适用于已经配对但未出现在列表中的经典蓝牙耳机. 当前 macOS 端使用 RFCOMM 控制通道.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    HStack {
+                        TextField("AA:BB:CC:DD:EE:FF", text: $address).textFieldStyle(.roundedBorder)
+                            .font(.system(.body, design: .monospaced))
+                            .onSubmit { if BluetoothAddress.normalize(address) != nil { model.connect(address: address) } }
+                        Button("连接") { model.connect(address: address) }
+                            .disabled(BluetoothAddress.normalize(address) == nil || !model.ready || model.busy)
+                    }
                 }
             }
         }

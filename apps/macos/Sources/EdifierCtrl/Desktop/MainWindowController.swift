@@ -28,7 +28,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.isRestorable = false
         window.tabbingMode = .disallowed
-        window.collectionBehavior = [.fullScreenPrimary]
+        // primary 决定窗口所属应用和 Space, fullScreenPrimary 仅表示窗口自身可以全屏.
+        // 显式指定普通主窗口, 避免辅助应用身份使它加入其他应用的全屏 Space.
+        window.collectionBehavior = [.primary, .managed, .fullScreenPrimary]
         window.delegate = self
         let hostingView = NSHostingView(rootView: RootView(model: model))
         hostingView.sizingOptions = []
@@ -123,7 +125,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let chrome = window.frameRect(forContentRect: NSRect(x: 0, y: 0, width: 1, height: 1)).height - 1
         let available = NSSize(width: max(1, screenFrame.width), height: max(1, screenFrame.height - chrome))
         let minimum = NSSize(width: min(900, available.width), height: min(650, available.height))
-        window.contentMinSize = minimum
+        // NSHostingView 使用 Auto Layout, AppKit 此时忽略 contentMinSize.
+        // 直接约束内容视图, 让鼠标缩放与窗口恢复采用同一屏幕范围内的尺寸下限.
+        if let contentView = window.contentView {
+            NSLayoutConstraint.activate([
+                contentView.widthAnchor.constraint(greaterThanOrEqualToConstant: minimum.width),
+                contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: minimum.height),
+            ])
+        }
         normalSize.width = min(max(normalSize.width, minimum.width), available.width)
         normalSize.height = min(max(normalSize.height, minimum.height), available.height)
         window.setContentSize(normalSize)

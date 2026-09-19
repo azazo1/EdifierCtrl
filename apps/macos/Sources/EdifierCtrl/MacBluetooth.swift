@@ -13,8 +13,6 @@ enum MacBluetooth {
         }
     }
     static var connection: RfcommConnection?
-    // SDP 没有取消 API, 保留回调目标直到系统完成查询.
-    static var pendingQueries: [String: RfcommConnection] = [:]
     private static let errorKey = "EdifierCtrl.BluetoothError"
 
     static func onMain<T>(_ body: () throws -> T) rethrows -> T {
@@ -24,7 +22,7 @@ enum MacBluetooth {
 
     static func setError(_ text: String) {
         Thread.current.threadDictionary[errorKey] = BluetoothErrorString(text)
-        NSLog("EdifierBt %@", text)
+        AppLog.error("蓝牙桥操作失败: \(text)", category: "bluetooth")
     }
 
     static func ok() {
@@ -100,11 +98,8 @@ public func edifier_macos_open(_ address: UnsafePointer<CChar>?) -> Int32 {
         }
         let address = try MacBluetooth.address(address)
         let connection = try MacBluetooth.onMain {
-            guard MacBluetooth.pendingQueries[address] == nil else {
-                throw BluetoothFailure("该设备的 SDP 查询尚未完成")
-            }
             guard let device = IOBluetoothDevice(addressString: address) else {
-                throw BluetoothFailure("找不到设备 \(address)")
+                throw BluetoothFailure("无法创建蓝牙设备对象")
             }
             MacBluetooth.connection?.close()
             let connection = RfcommConnection(device: device, address: address)
@@ -194,7 +189,7 @@ public func edifier_macos_audio_disconnect(_ pointer: UnsafePointer<CChar>?) -> 
         let address = try MacBluetooth.address(pointer)
         try MacBluetooth.onMain {
             guard let device = IOBluetoothDevice(addressString: address) else {
-                throw BluetoothFailure("找不到设备 \(address)")
+                throw BluetoothFailure("无法创建蓝牙设备对象")
             }
             // 公共 API 只能释放整条 ACL, 对应 RFCOMM 也必须立即结束.
             if MacBluetooth.connection?.address == address {

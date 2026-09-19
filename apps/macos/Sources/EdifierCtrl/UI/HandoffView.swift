@@ -23,17 +23,15 @@ struct HandoffView: View {
                 } else {
                     ForEach(model.peers) { peer in peerRow(peer) }
                 }
-                Surface {
-                    DisclosureGroup("通过耳机地址接管") {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("耳机必须已在这台 Mac 上配对. 确保原设备也已加入同一组.")
-                                .font(.caption).foregroundStyle(.secondary)
-                            HStack {
-                                TextField("AA:BB:CC:DD:EE:FF", text: $manualAddress).textFieldStyle(.roundedBorder)
-                                Button("接管到这台 Mac") { model.claim(address: manualAddress) }
-                                    .disabled(model.busy || BluetoothAddress.normalize(manualAddress) == nil)
-                            }
-                        }.padding(.top, 14)
+                DisclosureGroup("通过耳机地址接管") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("耳机必须已在这台 Mac 上配对. 确保原设备也已加入同一组.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        HStack {
+                            TextField("AA:BB:CC:DD:EE:FF", text: $manualAddress).textFieldStyle(.roundedBorder)
+                            Button("接管到这台 Mac") { model.claim(address: manualAddress) }
+                                .disabled(model.busy || BluetoothAddress.normalize(manualAddress) == nil)
+                        }
                     }
                 }
             }
@@ -78,7 +76,7 @@ struct HandoffView: View {
                             .disabled(!model.ready || model.busy || model.groupSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                     HStack {
-                        Toggle("在钥匙串中记住口令", isOn: $model.rememberGroup).toggleStyle(.checkbox).font(.callout)
+                        Toggle("在数据目录中记住口令", isOn: $model.rememberGroup).toggleStyle(.checkbox).font(.callout)
                         Spacer()
                         Button("读取已保存口令") { model.loadRememberedGroup() }.buttonStyle(.link)
                     }

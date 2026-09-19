@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 
-/// 配置, 日志, Keychain 名空间和单实例标识始终使用同一数据目录.
+/// 配置, 组口令, 日志和单实例标识始终使用同一数据目录.
 enum AppPaths {
     static let dataDirectory: URL = {
         if let custom = environmentPath("EDIFIER_DATA_DIR") {

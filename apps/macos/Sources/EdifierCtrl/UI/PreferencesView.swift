@@ -15,7 +15,7 @@ struct PreferencesView: View {
                     Divider()
                     preference("隐藏窗口时隐藏 Dock 图标", detail: "点击菜单栏图标可恢复主窗口", value: $preferences.hideDockWhenHidden)
                     Divider()
-                    preference("启动时自动加入交接组", detail: "需要先在交接页将组口令保存到钥匙串", value: $preferences.autoJoinGroup)
+                    preference("启动时自动加入交接组", detail: "需要先在交接页将组口令保存到数据目录", value: $preferences.autoJoinGroup)
                 }
             }
             Surface {
@@ -101,23 +101,21 @@ struct ActivityView: View {
                     }
                 }
             }
-            Surface {
-                DisclosureGroup("协议工具") {
-                    VStack(alignment: .leading, spacing: 14) {
-                        Text("仅进行本地封装或解析, 不向耳机发送指令.").font(.caption).foregroundStyle(.secondary)
-                        TextEditor(text: $model.diagnosticInput).font(.system(.body, design: .monospaced))
-                            .frame(height: 80).padding(8).background(Palette.canvas, in: RoundedRectangle(cornerRadius: 10))
-                            .accessibilityLabel("待解析的 JSON 命令或十六进制帧")
-                        HStack {
-                            Button("封装 JSON 命令") { model.inspect(frame: false) }
-                            Button("解析十六进制帧") { model.inspect(frame: true) }
-                        }.disabled(!model.ready || model.busy)
-                        if !model.diagnosticOutput.isEmpty {
-                            Text(model.diagnosticOutput).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading).padding(14)
-                                .background(Palette.canvas, in: RoundedRectangle(cornerRadius: 10))
-                        }
-                    }.padding(.top, 16)
+            DisclosureGroup("协议工具") {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("仅进行本地封装或解析, 不向耳机发送指令.").font(.caption).foregroundStyle(.secondary)
+                    TextEditor(text: $model.diagnosticInput).font(.system(.body, design: .monospaced))
+                        .frame(height: 80).padding(8).background(Palette.canvas, in: RoundedRectangle(cornerRadius: 10))
+                        .accessibilityLabel("待解析的 JSON 命令或十六进制帧")
+                    HStack {
+                        Button("封装 JSON 命令") { model.inspect(frame: false) }
+                        Button("解析十六进制帧") { model.inspect(frame: true) }
+                    }.disabled(!model.ready || model.busy)
+                    if !model.diagnosticOutput.isEmpty {
+                        Text(model.diagnosticOutput).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(14)
+                            .background(Palette.canvas, in: RoundedRectangle(cornerRadius: 10))
+                    }
                 }
             }
         }

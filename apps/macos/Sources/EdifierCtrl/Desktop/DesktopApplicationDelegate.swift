@@ -42,6 +42,9 @@ final class DesktopApplicationDelegate: NSObject, NSApplicationDelegate {
         self.preferences = preferences
         AppLog.installExceptionHandler()
         AppLog.info("EdifierCtrl \(AppVersion.display) 启动, fake=\(AppVersion.isFakeBuild), 系统 \(ProcessInfo.processInfo.operatingSystemVersionString).", category: "desktop")
+        // 在创建主窗口前确定应用身份, 避免先以 accessory 身份归入当前全屏 Space.
+        wantsVisibleWindow = !preferences.startHidden || pendingActivation
+        updateDockPolicy()
         let model = AppModel()
         self.model = model
         mainWindow = MainWindowController(model: model, preferences: preferences) { [weak self] in

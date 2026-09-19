@@ -30,6 +30,7 @@ struct RootView: View {
             }
         }
         .tint(Palette.accent)
+        .disclosureGroupStyle(CardDisclosureStyle())
         .frame(minWidth: 900, minHeight: 650)
         .sheet(isPresented: $updates.isPresented) { UpdateView() }
     }
@@ -66,6 +67,8 @@ struct RootView: View {
                         Spacer()
                         Image(systemName: updates.hasUpdate ? "arrow.down.circle.fill" : "info.circle").font(.caption)
                     }
+                    .frame(maxWidth: .infinity, minHeight: 28)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain).foregroundStyle(updates.hasUpdate ? Palette.accent : Color.secondary)
                 .help("版本与更新")

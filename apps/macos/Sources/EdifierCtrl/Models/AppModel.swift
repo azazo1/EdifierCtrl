@@ -19,7 +19,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var coreVersion = ""
     @Published var notice: UserNotice?
     @Published var groupSecret = ""
-    @Published var rememberGroup = false
+    @Published var rememberGroup = true
     @Published var diagnosticInput = "{\"op\":\"query_battery\"}"
     @Published private(set) var diagnosticOutput = ""
 
@@ -73,16 +73,13 @@ final class AppModel: ObservableObject {
                 ready = true
                 record("耳机服务已启动", detail: "核心版本 \(version)")
                 beginPolling()
-                // 未开启自动加入时, 避免启动即触发钥匙串访问提示.
-                if AppPreferences.shared.autoJoinGroup {
-                    do {
-                        if let secret = try GroupSecret.load(), !secret.isEmpty {
-                            groupSecret = secret
-                            rememberGroup = true
-                            joinGroup()
-                        }
-                    } catch { report("无法恢复交接组", error: error) }
-                }
+                do {
+                    if let secret = try GroupSecret.load(), !secret.isEmpty {
+                        groupSecret = secret
+                        rememberGroup = true
+                        if AppPreferences.shared.autoJoinGroup { joinGroup() }
+                    }
+                } catch { report("无法读取已保存的组口令", error: error) }
             } catch { report("耳机服务启动失败", error: error) }
         }
     }
