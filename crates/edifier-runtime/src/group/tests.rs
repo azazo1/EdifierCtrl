@@ -260,6 +260,88 @@ async fn adopt_only_holds_verified_connected_audio() {
 }
 
 #[tokio::test]
+async fn failed_adoption_is_observed_without_reconnecting() {
+    let hub = hub(TestAudio { fail_connect: true, ..TestAudio::default() }, None);
+    hub.audio.states.lock().await.insert(OTHER.into(), AudioState::Connected);
+    hub.adopt_headset(Some("aa-bb-cc-dd-ee-ff".into())).await;
+    assert_eq!(hub.peer.lock().await.holding, None);
+    let calls = hub.audio.calls.lock().await.clone();
+    assert_eq!(calls, vec![AudioCall::Connect(MAC.into())]);
+
+    for state in [AudioState::Unknown, AudioState::Connecting, AudioState::Connected,
+        AudioState::Disconnected, AudioState::Connected] {
+        hub.audio.states.lock().await.insert(MAC.into(), state);
+        hub.announce().await;
+        let expected = (state == AudioState::Connected).then_some(MAC);
+        assert_eq!(hub.peer.lock().await.holding.as_deref(), expected);
+        assert_eq!(hub.holding().await.as_deref(), expected);
+        assert_eq!(hub.has_audio().await, expected.is_some());
+        assert!(matches!(messages(&hub).await.last(), Some(GroupMessage::Announce { peer })
+            if peer.holding.as_deref() == expected));
+        assert_eq!(*hub.audio.calls.lock().await, calls);
+    }
+    hub.set_holding(None).await;
+    hub.announce().await;
+    assert_eq!(hub.holding().await, None);
+    assert_eq!(*hub.audio.calls.lock().await, calls);
+}
+
+#[tokio::test]
+async fn failed_claim_keeps_candidate_for_manual_connection() {
+    let hub = hub(TestAudio { fail_connect: true, ..TestAudio::default() }, None);
+    hub.claim_at(MAC, [7; 16], now_ms()).await.unwrap();
+    let phase = hub.machine.lock().await.phase();
+    hub.audio.states.lock().await.insert(MAC.into(), AudioState::Connected);
+    hub.announce().await;
+    assert_eq!(hub.machine.lock().await.phase(), phase);
+    assert_eq!(hub.peer.lock().await.holding, None);
+    assert!(!hub.has_audio().await);
+    assert!(hub.audio.calls.lock().await.is_empty());
+
+    hub.audio.states.lock().await.insert(MAC.into(), AudioState::Disconnected);
+    dispatch(&hub, "holder", GroupMessage::HandoffReleased { nonce: nonce_to_hex([7; 16]) }).await;
+    assert_eq!(hub.machine.lock().await.phase(), Phase::Idle);
+    assert_eq!(hub.holding().await, None);
+    let calls = hub.audio.calls.lock().await.clone();
+    assert_eq!(calls, vec![AudioCall::Connect(MAC.into())]);
+    hub.audio.states.lock().await.insert(MAC.into(), AudioState::Connected);
+    hub.announce().await;
+    assert_eq!(hub.holding().await.as_deref(), Some(MAC));
+    assert!(hub.has_audio().await);
+    assert_eq!(*hub.audio.calls.lock().await, calls);
+    assert!(!messages(&hub).await.iter().any(|m| matches!(m, GroupMessage::HandoffTaken { .. })));
+}
+
+#[tokio::test]
+async fn released_candidate_is_observed_only_when_idle_without_restoring_suppression() {
+    let hub = hub(TestAudio::default(), None);
+    seed_holder(&hub).await;
+    dispatch(&hub, "requester", request(MAC)).await;
+    let phase = hub.machine.lock().await.phase();
+    assert!(matches!(phase, Phase::Releasing { .. }));
+    let calls = hub.audio.calls.lock().await.clone();
+    hub.audio.states.lock().await.insert(MAC.into(), AudioState::Connected);
+    hub.announce().await;
+    assert_eq!(hub.machine.lock().await.phase(), phase);
+    assert_eq!(hub.peer.lock().await.holding, None);
+    assert!(!hub.has_audio().await);
+    assert!(matches!(messages(&hub).await.last(), Some(GroupMessage::Announce { peer }) if peer.holding.is_none()));
+
+    dispatch(&hub, "requester", GroupMessage::HandoffTaken { nonce: nonce_to_hex([7; 16]) }).await;
+    for state in [AudioState::Disconnected, AudioState::Unknown, AudioState::Connecting, AudioState::Connected] {
+        hub.audio.states.lock().await.insert(MAC.into(), state);
+        hub.announce().await;
+        let expected = (state == AudioState::Connected).then_some(MAC);
+        assert_eq!(hub.holding().await.as_deref(), expected);
+        assert!(matches!(messages(&hub).await.last(), Some(GroupMessage::Announce { peer })
+            if peer.holding.as_deref() == expected));
+        assert!(hub.operation.lock().await.suppressed.contains(&MacAddr::parse(MAC).unwrap()));
+        assert!(hub.audio.suppressed.lock().await.contains(MAC));
+        assert_eq!(*hub.audio.calls.lock().await, calls);
+    }
+}
+
+#[tokio::test]
 async fn three_peers_wait_for_holder_even_when_bystander_replies_first() {
     let holder = hub(TestAudio::default(), None);
     let requester = hub(TestAudio::default(), None);
@@ -544,6 +626,7 @@ async fn busy_claim_returns_error_without_canceling_original_claim() {
     let phase = hub.machine.lock().await.phase();
     assert!(hub.claim_at(OTHER, [8; 16], 1).await.is_err());
     assert_eq!(hub.machine.lock().await.phase(), phase);
+    assert_eq!(hub.operation.lock().await.audio_candidate, Some(MacAddr::parse(MAC).unwrap()));
     assert!(hub.machine.lock().await.can_control_headset);
     assert_eq!(messages(&hub).await.len(), 1);
 }
@@ -635,9 +718,12 @@ async fn holding_queries_and_announcements_revalidate_audio() {
         hub.audio.states.lock().await.insert(MAC.into(), state);
         assert_eq!(hub.holding().await, None);
         hub.announce().await;
+        assert_eq!(hub.peer.lock().await.holding, None);
+        assert!(!hub.has_audio().await);
         assert!(matches!(messages(&hub).await.last(), Some(GroupMessage::Announce { peer }) if peer.holding.is_none()));
     }
     hub.audio.states.lock().await.insert(MAC.into(), AudioState::Connected);
+    hub.announce().await;
     assert_eq!(hub.holding().await.as_deref(), Some(MAC));
 }
 

@@ -42,13 +42,16 @@ impl ServiceControl for Win32Services {
         with_radio(|radio| {
             let info = find_device(radio, addr)?;
             let rc = unsafe { BluetoothSetServiceState(radio, &info, &guid, flag) };
-            // 有效 flags 下 E_INVALIDARG 表示服务已经处于请求的启用状态.
-            if rc == 0 || rc == windows::Win32::Foundation::E_INVALIDARG.0 as u32 {
+            // E_INVALIDARG (0x80070057) 与 Win32 ERROR_INVALID_PARAMETER (87) 不同.
+            // 非零返回交由服务层重新枚举核验, 两者都不能证明音频端点已连接.
+            if rc == 0 {
                 info!(target: "edifier_bt_windows", address, enable, ?service, "已请求蓝牙音频服务状态");
                 Ok(())
             } else {
-                warn!(target: "edifier_bt_windows", address, ?service, win32 = rc, "BluetoothSetServiceState 失败");
-                Err(TransportError::Connect(format!("BluetoothSetServiceState {service:?} win32={rc}")))
+                warn!(target: "edifier_bt_windows", address, enable, ?service, flags = flag, win32 = rc, "BluetoothSetServiceState 失败");
+                Err(TransportError::Connect(format!(
+                    "BluetoothSetServiceState {service:?} enable={enable} flags={flag:#x} win32={rc} ({rc:#010x})"
+                )))
             }
         })
     }

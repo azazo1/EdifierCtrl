@@ -10,12 +10,13 @@ const AUDIO_TIMEOUT: Duration = Duration::from_secs(3);
 pub(super) struct OperationState {
     pub(super) suppressed: HashSet<MacAddr>,
     pub(super) control_address: Option<MacAddr>,
+    pub(super) audio_candidate: Option<MacAddr>,
     pub(super) can_control: bool,
 }
 
 impl OperationState {
     pub(super) fn new(can_control: bool) -> Self {
-        Self { suppressed: HashSet::new(), control_address: None, can_control }
+        Self { suppressed: HashSet::new(), control_address: None, audio_candidate: None, can_control }
     }
 }
 
@@ -164,7 +165,7 @@ impl<N: GroupNet, A: AudioControl> GroupHub<N, A> {
                 Ok(Ok(AudioState::Connected)) => self.update_holding(Some(addr)).await,
                 _ => {}
             }
-            self.announce_inner().await;
+            self.announce_inner(operation).await;
             return Err(err);
         }
         Ok(())

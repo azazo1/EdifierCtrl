@@ -1,7 +1,7 @@
 use edifier_runtime::{AudioState, TransportError};
 use windows::core::{GUID, HSTRING, Interface};
 use windows::Devices::Bluetooth::BluetoothDevice;
-use windows::Devices::Enumeration::DeviceInformation;
+use windows::Devices::Enumeration::{DeviceInformation, DeviceInformationKind};
 use windows::Foundation::{Collections::IIterable, IPropertyValue};
 use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_ContainerId;
 use windows::Win32::Media::Audio::{
@@ -57,21 +57,29 @@ pub(super) fn audio_state(address: &str) -> Result<AudioState, TransportError> {
 }
 
 fn device_containers(address: &str) -> Result<Vec<GUID>, TransportError> {
-    let selector = BluetoothDevice::GetDeviceSelectorFromBluetoothAddress(parse_addr(address)?)
-        .map_err(win_err)?;
-    let key = HSTRING::from("System.Devices.ContainerId");
+    // 持有状态只查询已配对的目标. 按地址发现的默认 selector 会主动 inquiry, 超出交接期限.
+    let paired = BluetoothDevice::GetDeviceSelectorFromPairingState(true).map_err(win_err)?;
+    let addr = parse_addr(address)?;
+    let selector = HSTRING::from(format!(
+        "{paired} AND System.DeviceInterface.Bluetooth.DeviceAddress:=\"{addr:012x}\""
+    ));
+    // Bluetooth selector 返回 AEP, 其容器属性不同于普通 PnP 设备属性.
+    let key = HSTRING::from("System.Devices.Aep.ContainerId");
     let properties: IIterable<HSTRING> = vec![key.clone()].try_into().map_err(win_err)?;
-    let devices = DeviceInformation::FindAllAsyncAqsFilterAndAdditionalProperties(
-        &selector, &properties,
+    let devices = DeviceInformation::FindAllAsyncWithKindAqsFilterAndAdditionalProperties(
+        &selector, &properties, DeviceInformationKind::AssociationEndpoint,
     ).map_err(win_err)?.get().map_err(win_err)?;
     let mut containers = Vec::new();
     for index in 0..devices.Size().map_err(win_err)? {
         let device = devices.GetAt(index).map_err(win_err)?;
-        let value = device.Properties().map_err(win_err)?.Lookup(&key).map_err(win_err)?;
-        let property: IPropertyValue = value.cast().map_err(win_err)?;
-        let container = property.GetGuid().map_err(win_err)?;
-        if container != GUID::zeroed() {
-            containers.push(container);
+        let container = device.Properties().map_err(win_err)?.Lookup(&key)
+            .and_then(|value| value.cast::<IPropertyValue>())
+            .and_then(|property| property.GetGuid());
+        // 驱动尚未生成容器时属性可能为 null, 保留 Unknown 而非将空 WinRT 对象当异常.
+        if let Ok(container) = container {
+            if container != GUID::zeroed() && !containers.contains(&container) {
+                containers.push(container);
+            }
         }
     }
     Ok(containers)

@@ -29,8 +29,17 @@ impl WindowsAudio {
                 .map_err(|err| TransportError::Unavailable(format!("音频服务状态锁: {err}")))?;
             if release {
                 services.disconnect(&a2dp::Win32Services, &address)?;
+            } else if connect {
+                let observed = state::audio_state(&address);
+                info!(target: "edifier_bt_windows", address, ?observed, "请求连接前核验音频端点");
+                // 读取失败不能当成未连接, 避免关闭实际上仍在使用的服务.
+                if observed? == AudioState::Connected {
+                    services.observed_connected(&address);
+                } else {
+                    services.connect(&a2dp::Win32Services, &address)?;
+                }
             } else {
-                services.restore(&a2dp::Win32Services, &address, connect)?;
+                services.restore(&a2dp::Win32Services, &address)?;
             }
             info!(target: "edifier_bt_windows", address, release, connect, "音频服务请求完成, 实际连接由系统确认");
             Ok(())
@@ -47,8 +56,17 @@ impl Default for WindowsAudio {
 #[async_trait]
 impl AudioControl for WindowsAudio {
     async fn audio_state(&self, address: &str) -> Result<AudioState, TransportError> {
-        let address = address.to_string();
-        com::blocking(move || state::audio_state(&address)).await
+        let address = com::format_addr(com::parse_addr(address)?);
+        let services = self.services.clone();
+        com::blocking(move || {
+            let mut services = services.lock()
+                .map_err(|err| TransportError::Unavailable(format!("音频服务状态锁: {err}")))?;
+            let observed = state::audio_state(&address)?;
+            if observed == AudioState::Connected {
+                services.observed_connected(&address);
+            }
+            Ok(observed)
+        }).await
     }
 
     async fn connect_audio(&self, address: &str) -> Result<(), TransportError> {

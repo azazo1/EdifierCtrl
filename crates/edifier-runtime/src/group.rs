@@ -147,11 +147,12 @@ impl<N: GroupNet, A: AudioControl> GroupHub<N, A> {
 
     /// 仅发布经平台确认的音频持有状态, 不发起连接.
     pub async fn set_holding(&self, mac: Option<String>) {
-        let _operation = self.operation.lock().await;
+        let mut operation = self.operation.lock().await;
         if *self.closed.borrow() {
             return;
         }
         let mac = mac.as_deref().and_then(|s| MacAddr::parse(s).ok());
+        operation.audio_candidate = mac;
         let holding = if let Some(mac) = mac {
             let addr = mac.to_colon_string();
             matches!(
@@ -162,7 +163,7 @@ impl<N: GroupNet, A: AudioControl> GroupHub<N, A> {
             None
         };
         self.update_holding(holding).await;
-        self.announce_inner().await;
+        self.announce_inner(&operation).await;
     }
 
     /// 尝试接管音频, 只有平台确认 Connected 后才认领地址.
@@ -185,6 +186,7 @@ impl<N: GroupNet, A: AudioControl> GroupHub<N, A> {
             debug!(target: "edifier_runtime", "交接期间暂不重新接管音频");
             return;
         }
+        operation.audio_candidate = mac;
         let holding = if let Some(mac) = mac {
             let addr = mac.to_colon_string();
             match self.connect_verified(&mut operation, mac).await {
@@ -198,7 +200,7 @@ impl<N: GroupNet, A: AudioControl> GroupHub<N, A> {
             None
         };
         self.update_holding(holding).await;
-        self.announce_inner().await;
+        self.announce_inner(&operation).await;
     }
 
     pub async fn has_audio(&self) -> bool {
@@ -242,6 +244,7 @@ impl<N: GroupNet, A: AudioControl> GroupHub<N, A> {
         {
             let mut machine = self.machine.lock().await;
             if machine.phase() == Phase::Idle {
+                operation.audio_candidate = Some(mac);
                 machine.can_control_headset = operation.can_control
                     && self.cd.is_some() && operation.control_address == Some(mac);
             }
@@ -263,9 +266,9 @@ impl<N: GroupNet, A: AudioControl> GroupHub<N, A> {
     }
 
     pub async fn announce(&self) {
-        let _operation = self.operation.lock().await;
+        let operation = self.operation.lock().await;
         if !*self.closed.borrow() {
-            self.announce_inner().await;
+            self.announce_inner(&operation).await;
         }
     }
 
@@ -277,6 +280,7 @@ impl<N: GroupNet, A: AudioControl> GroupHub<N, A> {
         self.update_holding(None).await;
         self.peers.lock().await.clear();
         operation.control_address = None;
+        operation.audio_candidate = None;
         operation.can_control = false;
         self.machine.lock().await.can_control_headset = false;
         let mut error = None;
@@ -400,9 +404,28 @@ impl<N: GroupNet, A: AudioControl> GroupHub<N, A> {
             && operation.control_address.is_some() && operation.control_address == target;
     }
 
-    async fn announce_inner(&self) {
+    async fn announce_inner(&self, operation: &OperationState) {
         let mut peer = self.peer.lock().await.clone();
-        peer.holding = self.verified_holding().await;
+        if self.machine.lock().await.phase() == Phase::Idle {
+            // 候选只用于被动观察, 不能为了心跳重连或解除交接留下的重连抑制.
+            let candidate = peer.holding.clone()
+                .or_else(|| operation.audio_candidate.map(MacAddr::to_colon_string));
+            let holding = if let Some(addr) = candidate {
+                matches!(
+                    tokio::time::timeout(Duration::from_secs(3), self.audio.audio_state(&addr)).await,
+                    Ok(Ok(AudioState::Connected))
+                ).then_some(addr)
+            } else {
+                None
+            };
+            if peer.holding != holding {
+                info!(target: "edifier_runtime", holding = holding.as_deref().unwrap_or("-"), "音频持有状态已更新");
+            }
+            self.update_holding(holding.clone()).await;
+            peer.holding = holding;
+        } else {
+            peer.holding = self.verified_holding().await;
+        }
         if let Err(err) = self.broadcast(GroupMessage::Announce { peer }).await {
             warn!(target: "edifier_runtime", %err, "广播组状态失败");
         }
