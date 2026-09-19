@@ -6,7 +6,7 @@
 
 ## 现状
 
-核心库, C ABI 会话, Windows / Linux / Android / macOS 蓝牙适配和局域网交接已接通. Android 用 `just android build`. macOS 和 Windows 提供对应的设备工作台, 后台驻留与交接进度; 分别用 `just macos build` 和 `just windows build` 构建. 使用说明见 [macOS 桌面端](docs/macos.md) 和 [Windows 桌面端](docs/windows.md).
+核心库, C ABI 会话, Windows / Linux / Android / macOS 蓝牙适配和局域网交接已接通. Android 提供对应桌面交互的五页工作台, 用 `just android build` 构建; 说明见 [Android 客户端](docs/android.md). macOS 和 Windows 提供设备工作台, 后台驻留与交接进度; 分别用 `just macos build` 和 `just windows build` 构建. 使用说明见 [macOS 桌面端](docs/macos.md) 和 [Windows 桌面端](docs/windows.md).
 
 - `edifier-protocol` / `edifier-session` / `edifier-group` / `edifier-runtime`
 - `edifier-ffi`: C ABI, 头文件 `crates/edifier-ffi/include/edifier.h`, 说明见 `docs/ffi.md`

@@ -39,34 +39,81 @@ object BluetoothBridge {
     @JvmStatic
     fun lastError(): String = lastErrorText
 
+    @Volatile
+    private var started = false
+
+    private var generation = 0
+
     @JvmStatic
     fun attach(application: Application) {
+        // Application 创建时还没有运行时权限, 这里只保存上下文.
         app = application
-        val wifi = application.getSystemService(Context.WIFI_SERVICE) as WifiManager
-        val lock = wifi.createMulticastLock("edifierctrl")
-        lock.setReferenceCounted(false)
-        lock.acquire()
-        multicastLock = lock
-        Log.i(TAG, "已获取 Wi-Fi 组播锁")
-        val adapter = adapter() ?: return
-        adapter.getProfileProxy(
-            application,
-            object : BluetoothProfile.ServiceListener {
-                override fun onServiceConnected(profile: Int, proxy: BluetoothProfile) {
-                    if (profile == BluetoothProfile.A2DP) {
-                        a2dp = proxy as BluetoothA2dp
-                        Log.i(TAG, "A2DP 代理已就绪")
-                    }
-                }
+    }
 
-                override fun onServiceDisconnected(profile: Int) {
-                    if (profile == BluetoothProfile.A2DP) {
-                        a2dp = null
+    @JvmStatic
+    @Synchronized
+    fun start() {
+        if (started) return
+        val application = checkNotNull(app) { "蓝牙桥尚未初始化" }
+        val bluetooth = checkNotNull(adapter()) { "手机没有蓝牙适配器" }
+        check(bluetooth.isEnabled) { "请先在系统设置中打开蓝牙" }
+        val currentGeneration = ++generation
+        started = true
+        try {
+            val wifi = application.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            multicastLock = wifi.createMulticastLock("edifierctrl").apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+            check(bluetooth.getProfileProxy(
+                application,
+                object : BluetoothProfile.ServiceListener {
+                    override fun onServiceConnected(profile: Int, proxy: BluetoothProfile) {
+                        synchronized(this@BluetoothBridge) {
+                            if (!started || generation != currentGeneration) {
+                                runCatching { bluetooth.closeProfileProxy(profile, proxy) }
+                                    .onFailure { Log.w(TAG, "释放过期蓝牙代理失败", it) }
+                            } else if (profile == BluetoothProfile.A2DP) {
+                                a2dp = proxy as BluetoothA2dp
+                                Log.i(TAG, "A2DP 代理已就绪")
+                            }
+                        }
                     }
-                }
-            },
-            BluetoothProfile.A2DP,
-        )
+
+                    override fun onServiceDisconnected(profile: Int) {
+                        synchronized(this@BluetoothBridge) {
+                            if (generation == currentGeneration && profile == BluetoothProfile.A2DP) {
+                                a2dp = null
+                            }
+                        }
+                    }
+                },
+                BluetoothProfile.A2DP,
+            )) { "无法取得系统蓝牙音频服务" }
+            Log.i(TAG, "蓝牙桥已启动, Wi-Fi 组播锁已获取")
+        } catch (error: Exception) {
+            stop()
+            throw error
+        }
+    }
+
+    @JvmStatic
+    @Synchronized
+    fun stop() {
+        started = false
+        generation += 1
+        closeRfcomm()
+        val proxy = a2dp
+        a2dp = null
+        if (proxy != null) {
+            runCatching { adapter()?.closeProfileProxy(BluetoothProfile.A2DP, proxy) }
+                .onFailure { Log.w(TAG, "释放 A2DP 代理失败", it) }
+        }
+        val lock = multicastLock
+        multicastLock = null
+        runCatching { if (lock?.isHeld == true) lock.release() }
+            .onFailure { Log.w(TAG, "释放 Wi-Fi 组播锁失败", it) }
+        Log.i(TAG, "蓝牙桥已停止")
     }
 
     @JvmStatic
@@ -175,41 +222,48 @@ object BluetoothBridge {
 
     @JvmStatic
     fun audioState(address: String): String {
-        val proxy = a2dp ?: return "disconnected"
-        val device = adapter()?.getRemoteDevice(address) ?: return "disconnected"
-        val st = proxy.getConnectionState(device)
-        return if (st == BluetoothProfile.STATE_CONNECTED
-            || st == BluetoothProfile.STATE_CONNECTING
-        ) {
-            "connected"
-        } else {
-            "disconnected"
+        val proxy = a2dp ?: return "unknown"
+        return try {
+            val device = adapter()?.getRemoteDevice(address) ?: return "unknown"
+            when (proxy.getConnectionState(device)) {
+                BluetoothProfile.STATE_CONNECTED -> "connected"
+                BluetoothProfile.STATE_CONNECTING -> "connecting"
+                BluetoothProfile.STATE_DISCONNECTED -> "disconnected"
+                else -> "unknown"
+            }
+        } catch (error: Exception) {
+            val message = "读取系统音频失败: ${error.message}"
+            if (lastErrorText != message) Log.w(TAG, message, error)
+            lastErrorText = message
+            "unknown"
         }
     }
 
     @JvmStatic
     fun connectAudio(address: String): Int {
         waitA2dp()
-        invokeA2dp("connect", address)
+        if (audioState(address) == "connected") return 0
+        val request = invokeA2dp("connect", address)
         repeat(25) {
             if (audioState(address) == "connected") {
                 return 0
             }
             Thread.sleep(100)
         }
-        return fail("A2DP 未连上")
+        return if (request != 0) -1 else fail("未确认系统音频连接, 可在系统蓝牙设置中连接后重试")
     }
 
     @JvmStatic
     fun disconnectAudio(address: String): Int {
-        invokeA2dp("disconnect", address)
+        if (audioState(address) == "disconnected") return 0
+        val request = invokeA2dp("disconnect", address)
         repeat(5) {
-            if (audioState(address) != "connected") {
+            if (audioState(address) == "disconnected") {
                 return 0
             }
             Thread.sleep(100)
         }
-        return fail("A2DP 未断开")
+        return if (request != 0) -1 else fail("尚未确认系统音频断开")
     }
 
     private fun waitA2dp() {

@@ -13,6 +13,7 @@ use crate::{
     edifier_session_connect, edifier_session_disconnect, edifier_session_free,
     edifier_session_group_claim,
     edifier_session_group_claim_peer, edifier_session_group_id_hex, edifier_session_group_join,
+    edifier_session_group_leave,
     edifier_session_group_peers, edifier_session_holding, edifier_session_new,
     edifier_session_poll_event, edifier_session_set_holding,
     edifier_session_readout, edifier_session_scan, edifier_session_send_json, edifier_string_free,
@@ -283,6 +284,15 @@ pub extern "system" fn Java_dev_edifierctrl_app_EdifierNative_sessionGroupJoin(
             -1
         }
     }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_dev_edifierctrl_app_EdifierNative_sessionGroupLeave(
+    _env: JNIEnv,
+    _class: JClass,
+    session: jlong,
+) -> jint {
+    edifier_session_group_leave(session_ptr(session))
 }
 
 #[no_mangle]

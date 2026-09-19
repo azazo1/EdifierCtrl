@@ -279,7 +279,7 @@ impl AudioControl for AndroidAudio {
                 check_exc(env)?;
                 let obj = v.l().map_err(|e| e.to_string())?;
                 if obj.is_null() {
-                    return Ok("disconnected".into());
+                    return Ok("unknown".into());
                 }
                 Ok(env
                     .get_string(&JString::from(obj))
@@ -290,10 +290,11 @@ impl AudioControl for AndroidAudio {
         })
         .await
         .map_err(|e| TransportError::Unavailable(e.to_string()))??;
-        Ok(if text == "connected" {
-            AudioState::Connected
-        } else {
-            AudioState::Disconnected
+        Ok(match text.as_str() {
+            "connected" => AudioState::Connected,
+            "connecting" => AudioState::Connecting,
+            "disconnected" => AudioState::Disconnected,
+            _ => AudioState::Unknown,
         })
     }
 
