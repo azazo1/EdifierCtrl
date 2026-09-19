@@ -6,7 +6,7 @@
 
 ## 现状
 
-核心库, C ABI 会话, Windows / Linux / Android / macOS 蓝牙适配和局域网交接已可编译. 四端界面已接到扫描 / 连接 / 控制 / 组 / 调试. Android 需 `just android-ffi`, macOS 需把 `libedifier_ffi.dylib` 放到可执行文件旁.
+核心库, C ABI 会话, Windows / Linux / Android / macOS 蓝牙适配和局域网交接已可编译. 四端界面已接到扫描 / 连接 / 控制 / 组 / 调试. Android 用 `just android build`, macOS 用 `just macos build` (会把 `libedifier_ffi.dylib` 放到可执行文件旁).
 
 - `edifier-protocol` / `edifier-session` / `edifier-group` / `edifier-runtime`
 - `edifier-ffi`: C ABI, 头文件 `crates/edifier-ffi/include/edifier.h`, 说明见 `docs/ffi.md`
@@ -31,9 +31,15 @@ just encode C101
 just decode AA02C1012187
 just parse BB02D04D21F3
 just profiles
-just android-ffi
-just gtk
-just winui
+just android build
+just android install
+just android run
+just windows build
+just windows run
+just macos build
+just macos run
+just linux build
+just linux run
 ```
 
 ## 结构
