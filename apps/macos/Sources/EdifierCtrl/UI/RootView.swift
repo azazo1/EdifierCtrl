@@ -66,7 +66,9 @@ struct RootView: View {
                         Spacer()
                         Image(systemName: updates.hasUpdate ? "arrow.down.circle.fill" : "info.circle").font(.caption)
                     }
-                    .frame(maxWidth: .infinity, minHeight: 28)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, minHeight: 32)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(QuietButtonStyle(cornerRadius: 6)).foregroundStyle(updates.hasUpdate ? Palette.accent : Color.secondary)
