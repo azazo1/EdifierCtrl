@@ -43,18 +43,55 @@ import kotlinx.coroutines.withContext
 
 private data class ConfirmOp(val title: String, val body: String, val json: String)
 
+private class CardDraft<T>(committed: T) {
+    var value by mutableStateOf(committed)
+        private set
+    var dirty by mutableStateOf(false)
+        private set
+
+    fun edit(next: T, committed: T) {
+        value = next
+        dirty = next != committed
+    }
+
+    fun revert(committed: T) {
+        value = committed
+        dirty = false
+    }
+
+    fun markApplied() {
+        dirty = false
+    }
+
+    fun syncFrom(committed: T) {
+        if (!dirty) {
+            value = committed
+        }
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ControlScreen() {
     var confirm by remember { mutableStateOf<ConfirmOp?>(null) }
-    var nameDraft by remember { mutableStateOf(SessionUi.deviceName.orEmpty()) }
     val session = remember { EdifierNative.ensureSession() }
     val scope = rememberCoroutineScope()
-    LaunchedEffect(SessionUi.deviceName) {
-        if (nameDraft.isEmpty()) {
-            nameDraft = SessionUi.deviceName.orEmpty()
-        }
-    }
+    val name = rememberDraft(SessionUi.deviceName.orEmpty())
+    val noise = rememberDraft(SessionUi.noise)
+    val ambient = rememberDraft(SessionUi.ambientVolume)
+    val effect = rememberDraft(SessionUi.effect)
+    val prompt = rememberDraft(SessionUi.promptVolume)
+    val shutdownOn = rememberDraft(SessionUi.shutdownOn)
+    val shutdownMin = rememberDraft(SessionUi.shutdownMinutes)
+    val ldac = rememberDraft(SessionUi.ldac)
+    val game = rememberDraft(SessionUi.gameMode)
+    val autoOff = rememberDraft(SessionUi.autoPowerOff)
+    val csNormal = rememberDraft(SessionUi.controlNormal)
+    val csReduction = rememberDraft(SessionUi.controlReduction)
+    val csAmbient = rememberDraft(SessionUi.controlAmbient)
+    val shutdownDirty = shutdownOn.dirty || shutdownMin.dirty
+    val switchDirty = game.dirty || autoOff.dirty
+    val controlDirty = csNormal.dirty || csReduction.dirty || csAmbient.dirty
     Column(
         Modifier
             .fillMaxSize()
@@ -64,7 +101,7 @@ fun ControlScreen() {
     ) {
         Text("控制", style = MaterialTheme.typography.headlineSmall)
         Text(
-            if (SessionUi.connected) "改设置会发到已连接的耳机." else "先到设备页连接耳机.",
+            if (SessionUi.connected) "改完点卡片上的生效才会发到耳机." else "先到设备页连接耳机.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -87,67 +124,86 @@ fun ControlScreen() {
         }
         Section("名称", "改完要删配对记录再配对才生效.") {
             OutlinedTextField(
-                value = nameDraft,
-                onValueChange = { nameDraft = it },
+                value = name.value,
+                onValueChange = { name.edit(it, SessionUi.deviceName.orEmpty()) },
                 label = { Text("耳机名") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
             )
-            FilledTonalButton(onClick = {
-                val escaped = nameDraft.replace("\\", "\\\\").replace("\"", "\\\"")
+            ApplyBar(name.dirty, { name.revert(SessionUi.deviceName.orEmpty()) }) {
+                val escaped = name.value.replace("\\", "\\\\").replace("\"", "\\\"")
                 SessionUi.hint = sendJson(session, """{"op":"set_name","name":"$escaped"}""")
-            }) { Text("设置名称") }
+                SessionUi.deviceName = name.value
+                name.markApplied()
+            }
         }
         Section("降噪") {
             ChipRow(
                 options = listOf("normal" to "关闭", "reduction" to "降噪", "ambient" to "通透"),
-                selected = SessionUi.noise,
-            ) { mode ->
-                SessionUi.noise = mode
+                selected = noise.value,
+            ) { mode -> noise.edit(mode, SessionUi.noise) }
+            ApplyBar(noise.dirty, { noise.revert(SessionUi.noise) }) {
+                val mode = noise.value ?: return@ApplyBar
                 SessionUi.hint = sendJson(session, """{"op":"set_noise_mode","mode":"$mode"}""")
+                SessionUi.noise = mode
+                noise.markApplied()
             }
         }
         Section("通透音量", "仅通透模式有效, -3 到 3.") {
-            Text("${SessionUi.ambientVolume}")
+            Text("${ambient.value}")
             Slider(
-                value = SessionUi.ambientVolume.toFloat(),
-                onValueChange = { SessionUi.ambientVolume = it.roundToInt() },
-                onValueChangeFinished = {
-                    SessionUi.hint = sendJson(
-                        session,
-                        """{"op":"set_ambient_volume","volume":${SessionUi.ambientVolume}}""",
-                    )
-                },
+                value = ambient.value.toFloat(),
+                onValueChange = { ambient.edit(it.roundToInt(), SessionUi.ambientVolume) },
                 valueRange = -3f..3f,
                 steps = 5,
             )
+            ApplyBar(ambient.dirty, { ambient.revert(SessionUi.ambientVolume) }) {
+                SessionUi.hint = sendJson(
+                    session,
+                    """{"op":"set_ambient_volume","volume":${ambient.value}}""",
+                )
+                SessionUi.ambientVolume = ambient.value
+                ambient.markApplied()
+            }
         }
         Section("按键可切换的模式", "至少选 2 项.") {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
-                    selected = SessionUi.controlNormal,
-                    onClick = {
-                        SessionUi.controlNormal = !SessionUi.controlNormal
-                        sendControl(session)
-                    },
+                    selected = csNormal.value,
+                    onClick = { csNormal.edit(!csNormal.value, SessionUi.controlNormal) },
                     label = { Text("关闭") },
                 )
                 FilterChip(
-                    selected = SessionUi.controlReduction,
-                    onClick = {
-                        SessionUi.controlReduction = !SessionUi.controlReduction
-                        sendControl(session)
-                    },
+                    selected = csReduction.value,
+                    onClick = { csReduction.edit(!csReduction.value, SessionUi.controlReduction) },
                     label = { Text("降噪") },
                 )
                 FilterChip(
-                    selected = SessionUi.controlAmbient,
-                    onClick = {
-                        SessionUi.controlAmbient = !SessionUi.controlAmbient
-                        sendControl(session)
-                    },
+                    selected = csAmbient.value,
+                    onClick = { csAmbient.edit(!csAmbient.value, SessionUi.controlAmbient) },
                     label = { Text("通透") },
                 )
+            }
+            ApplyBar(controlDirty, {
+                csNormal.revert(SessionUi.controlNormal)
+                csReduction.revert(SessionUi.controlReduction)
+                csAmbient.revert(SessionUi.controlAmbient)
+            }) {
+                val n = listOf(csNormal.value, csReduction.value, csAmbient.value).count { it }
+                if (n < 2) {
+                    SessionUi.hint = "至少选 2 项"
+                    return@ApplyBar
+                }
+                SessionUi.hint = sendJson(
+                    session,
+                    """{"op":"set_control_settings","normal":${csNormal.value},"reduction":${csReduction.value},"ambient":${csAmbient.value}}""",
+                )
+                SessionUi.controlNormal = csNormal.value
+                SessionUi.controlReduction = csReduction.value
+                SessionUi.controlAmbient = csAmbient.value
+                csNormal.markApplied()
+                csReduction.markApplied()
+                csAmbient.markApplied()
             }
         }
         Section("音效") {
@@ -158,76 +214,98 @@ fun ControlScreen() {
                     "classical" to "古典",
                     "rock" to "摇滚",
                 ),
-                selected = SessionUi.effect,
-            ) { effect ->
-                SessionUi.effect = effect
-                SessionUi.hint = sendJson(session, """{"op":"set_sound_effect","effect":"$effect"}""")
+                selected = effect.value,
+            ) { v -> effect.edit(v, SessionUi.effect) }
+            ApplyBar(effect.dirty, { effect.revert(SessionUi.effect) }) {
+                val v = effect.value ?: return@ApplyBar
+                SessionUi.hint = sendJson(session, """{"op":"set_sound_effect","effect":"$v"}""")
+                SessionUi.effect = v
+                effect.markApplied()
             }
         }
         Section("提示音量") {
-            Text("${SessionUi.promptVolume}")
+            Text("${prompt.value}")
             Slider(
-                value = SessionUi.promptVolume.toFloat(),
-                onValueChange = { SessionUi.promptVolume = it.roundToInt() },
-                onValueChangeFinished = {
-                    SessionUi.hint = sendJson(
-                        session,
-                        """{"op":"set_prompt_volume","volume":${SessionUi.promptVolume}}""",
-                    )
-                },
+                value = prompt.value.toFloat(),
+                onValueChange = { prompt.edit(it.roundToInt(), SessionUi.promptVolume) },
                 valueRange = 0f..15f,
                 steps = 14,
             )
+            ApplyBar(prompt.dirty, { prompt.revert(SessionUi.promptVolume) }) {
+                SessionUi.hint = sendJson(
+                    session,
+                    """{"op":"set_prompt_volume","volume":${prompt.value}}""",
+                )
+                SessionUi.promptVolume = prompt.value
+                prompt.markApplied()
+            }
         }
         Section("定时关机", "断电后会回到默认.") {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                Text(if (SessionUi.shutdownOn) "已开启" else "关闭")
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(if (shutdownOn.value) "已开启" else "关闭")
                 Switch(
-                    checked = SessionUi.shutdownOn,
-                    onCheckedChange = { on ->
-                        SessionUi.shutdownOn = on
-                        SessionUi.hint = if (on) {
-                            sendJson(session, """{"op":"set_shutdown_timer","minutes":${SessionUi.shutdownMinutes}}""")
-                        } else {
-                            sendJson(session, """{"op":"disable_shutdown_timer"}""")
-                        }
-                    },
+                    checked = shutdownOn.value,
+                    onCheckedChange = { shutdownOn.edit(it, SessionUi.shutdownOn) },
                 )
             }
-            Text("${SessionUi.shutdownMinutes} 分钟")
+            Text("${shutdownMin.value} 分钟")
             Slider(
-                value = SessionUi.shutdownMinutes.toFloat(),
-                onValueChange = { SessionUi.shutdownMinutes = it.roundToInt().coerceIn(1, 180) },
-                onValueChangeFinished = {
-                    if (SessionUi.shutdownOn) {
-                        SessionUi.hint = sendJson(
-                            session,
-                            """{"op":"set_shutdown_timer","minutes":${SessionUi.shutdownMinutes}}""",
-                        )
-                    }
+                value = shutdownMin.value.toFloat(),
+                onValueChange = {
+                    shutdownMin.edit(it.roundToInt().coerceIn(1, 180), SessionUi.shutdownMinutes)
                 },
                 valueRange = 1f..180f,
                 steps = 178,
-                enabled = SessionUi.shutdownOn,
+                enabled = shutdownOn.value,
             )
+            ApplyBar(shutdownDirty, {
+                shutdownOn.revert(SessionUi.shutdownOn)
+                shutdownMin.revert(SessionUi.shutdownMinutes)
+            }) {
+                SessionUi.hint = if (shutdownOn.value) {
+                    sendJson(session, """{"op":"set_shutdown_timer","minutes":${shutdownMin.value}}""")
+                } else {
+                    sendJson(session, """{"op":"disable_shutdown_timer"}""")
+                }
+                SessionUi.shutdownOn = shutdownOn.value
+                SessionUi.shutdownMinutes = shutdownMin.value
+                shutdownOn.markApplied()
+                shutdownMin.markApplied()
+            }
         }
         Section("LDAC", "改完要重新配对才生效, 同时会关掉定时关机.") {
             ChipRow(
                 options = listOf("off" to "关闭", "rate48k" to "44.1k / 48k", "rate96k" to "96k"),
-                selected = SessionUi.ldac,
-            ) { mode ->
-                SessionUi.ldac = mode
+                selected = ldac.value,
+            ) { mode -> ldac.edit(mode, SessionUi.ldac) }
+            ApplyBar(ldac.dirty, { ldac.revert(SessionUi.ldac) }) {
+                val mode = ldac.value ?: return@ApplyBar
                 SessionUi.hint = sendJson(session, """{"op":"set_ldac","mode":"$mode"}""")
+                SessionUi.ldac = mode
+                ldac.markApplied()
             }
         }
         Section("开关") {
-            ToggleRow("游戏模式", SessionUi.gameMode) { on ->
-                SessionUi.gameMode = on
-                SessionUi.hint = sendJson(session, """{"op":"set_game_mode","on":$on}""")
-            }
-            ToggleRow("无音频 30 分钟自动关机", SessionUi.autoPowerOff) { on ->
-                SessionUi.autoPowerOff = on
-                SessionUi.hint = sendJson(session, """{"op":"set_auto_power_off","on":$on}""")
+            ToggleRow("游戏模式", game.value) { game.edit(it, SessionUi.gameMode) }
+            ToggleRow("无音频 30 分钟自动关机", autoOff.value) { autoOff.edit(it, SessionUi.autoPowerOff) }
+            ApplyBar(switchDirty, {
+                game.revert(SessionUi.gameMode)
+                autoOff.revert(SessionUi.autoPowerOff)
+            }) {
+                if (game.dirty) {
+                    SessionUi.hint = sendJson(session, """{"op":"set_game_mode","on":${game.value}}""")
+                    SessionUi.gameMode = game.value
+                    game.markApplied()
+                }
+                if (autoOff.dirty) {
+                    SessionUi.hint = sendJson(session, """{"op":"set_auto_power_off","on":${autoOff.value}}""")
+                    SessionUi.autoPowerOff = autoOff.value
+                    autoOff.markApplied()
+                }
             }
         }
         Section("播放") {
@@ -286,6 +364,26 @@ fun ControlScreen() {
 }
 
 @Composable
+private fun <T> rememberDraft(committed: T): CardDraft<T> {
+    val draft = remember { CardDraft(committed) }
+    LaunchedEffect(committed) {
+        draft.syncFrom(committed)
+    }
+    return draft
+}
+
+@Composable
+private fun ApplyBar(dirty: Boolean, onRevert: () -> Unit, onApply: () -> Unit) {
+    if (!dirty) {
+        return
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(onClick = onRevert) { Text("撤回") }
+        Button(onClick = onApply) { Text("生效") }
+    }
+}
+
+@Composable
 private fun Section(title: String, caption: String? = null, content: @Composable ColumnScope.() -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -333,16 +431,4 @@ private fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
         Text(label, modifier = Modifier.weight(1f))
         Switch(checked = checked, onCheckedChange = onChange)
     }
-}
-
-private fun sendControl(session: Long) {
-    val n = listOf(SessionUi.controlNormal, SessionUi.controlReduction, SessionUi.controlAmbient).count { it }
-    if (n < 2) {
-        SessionUi.hint = "至少选 2 项"
-        return
-    }
-    SessionUi.hint = sendJson(
-        session,
-        """{"op":"set_control_settings","normal":${SessionUi.controlNormal},"reduction":${SessionUi.controlReduction},"ambient":${SessionUi.controlAmbient}}""",
-    )
 }
