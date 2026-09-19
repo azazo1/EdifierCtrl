@@ -8,6 +8,7 @@ namespace EdifierCtrl.Native;
 internal sealed class EventPump
 {
     private readonly DispatcherTimer _timer;
+    private int _ticks;
 
     public EventPump()
     {
@@ -19,8 +20,13 @@ internal sealed class EventPump
 
     public void Stop() => _timer.Stop();
 
-    private static void Drain()
+    private void Drain()
     {
+        _ticks++;
+        if (SessionState.GroupJoined && _ticks % 8 == 0)
+        {
+            SessionState.RefreshPeers();
+        }
         try
         {
             for (var i = 0; i < 32; i++)

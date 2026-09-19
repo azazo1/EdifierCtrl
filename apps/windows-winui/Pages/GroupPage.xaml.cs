@@ -38,6 +38,7 @@ public sealed partial class GroupPage : Page
             _timer.Start();
             if (SessionState.GroupJoined)
             {
+                JoinBtn.Content = "已加入";
                 RefreshPeers();
             }
         };
@@ -64,7 +65,9 @@ public sealed partial class GroupPage : Page
             }
             SessionState.GroupJoined = true;
             SessionState.Holding = EdifierNative.Holding();
+            JoinBtn.Content = "已加入";
             SessionState.SetHint("已加入组. 点成员接管其耳机.");
+            SessionState.RefreshPeers();
             RefreshPeers();
         }
         catch (Exception ex)

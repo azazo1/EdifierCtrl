@@ -27,6 +27,7 @@ public sealed partial class MainWindow : Window
             _pump.Stop();
         };
         _pump.Start();
+        SessionState.TryAutoJoin();
         OnState();
         Nav.SelectedItem = Nav.MenuItems[0];
         Show("device");

@@ -12,7 +12,7 @@
             </Grid.RowDefinitions>
             <StackPanel Spacing="6">
                 <TextBlock Text="设备" Style="{StaticResource TitleTextBlockStyle}"/>
-                <TextBlock Text="只列出系统里已经配对的耳机. 点列表即可连接控制通道." Style="{StaticResource MutedText}"/>
+                <TextBlock Text="只列出已配对的漫步者耳机. 被其他主机占用时点列表即可接管." Style="{StaticResource MutedText}"/>
             </StackPanel>
             <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
                 <RadioButtons x:Name="Kind" MaxColumns="2" SelectedIndex="0">
@@ -36,7 +36,7 @@
                             <TextBlock Text="{Binding Name}" Style="{StaticResource SubtitleTextBlockStyle}"/>
                             <TextBlock Text="{Binding Address}" Style="{StaticResource CaptionTextBlockStyle}"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                            <TextBlock Text="点按连接" Style="{StaticResource CaptionTextBlockStyle}"
+                            <TextBlock Text="{Binding Action}" Style="{StaticResource CaptionTextBlockStyle}"
                                        Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
                         </StackPanel>
                     </DataTemplate>
