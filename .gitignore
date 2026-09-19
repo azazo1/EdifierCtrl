@@ -15,3 +15,4 @@ apps/android/app/src/main/jniLibs/
 apps/windows-winui/bin/
 apps/windows-winui/obj/
 apps/macos/.build/
+AGENTS.local.md

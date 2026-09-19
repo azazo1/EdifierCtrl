@@ -58,6 +58,8 @@ pub struct HandoffMachine {
     pub has_audio: bool,
     pub can_control_headset: bool,
     phase: Phase,
+    peer_has_audio: bool,
+    peer_has_no_audio: bool,
 }
 
 impl HandoffMachine {
@@ -67,6 +69,8 @@ impl HandoffMachine {
             has_audio: false,
             can_control_headset: false,
             phase: Phase::Idle,
+            peer_has_audio: false,
+            peer_has_no_audio: false,
         }
     }
 
@@ -78,7 +82,9 @@ impl HandoffMachine {
         if self.phase != Phase::Idle {
             return vec![Action::Report(HandoffProgress::Busy)];
         }
-        let deadline_ms = now_ms + HANDOFF_DEADLINE_MS;
+        self.peer_has_audio = false;
+        self.peer_has_no_audio = false;
+        let deadline_ms = now_ms.saturating_add(HANDOFF_DEADLINE_MS);
         self.phase = Phase::WaitingRelease {
             nonce,
             headphone,
@@ -145,6 +151,7 @@ impl HandoffMachine {
     pub fn on_audio_failed(&mut self, reason: &str) -> Vec<Action> {
         match self.phase {
             Phase::ConnectingAudio { nonce, headphone }
+            | Phase::Releasing { nonce, headphone, .. }
             | Phase::WaitingFallbackGap { nonce, headphone, .. }
             | Phase::WaitingRelease { nonce, headphone, .. } => {
                 self.phase = Phase::Idle;
@@ -170,7 +177,13 @@ impl HandoffMachine {
                 nonce,
                 headphone,
                 deadline_ms,
-            } if now_ms >= deadline_ms => self.fallback_or_fail(nonce, headphone, now_ms),
+            } if now_ms >= deadline_ms => {
+                if self.peer_has_no_audio && !self.peer_has_audio {
+                    self.fallback_or_connect(nonce, headphone)
+                } else {
+                    self.fallback_or_fail(nonce, headphone, now_ms)
+                }
+            }
             Phase::WaitingFallbackGap {
                 nonce,
                 headphone,
@@ -183,19 +196,9 @@ impl HandoffMachine {
                 ]
             }
             Phase::Releasing {
-                headphone,
                 deadline_ms,
                 ..
-            } if now_ms >= deadline_ms => {
-                self.phase = Phase::Idle;
-                vec![
-                    Action::SuppressAutoreconnect {
-                        mac: headphone,
-                        suppress: false,
-                    },
-                    Action::Report(HandoffProgress::Failed("释放音频超时".into())),
-                ]
-            }
+            } if now_ms >= deadline_ms => self.on_audio_failed("释放音频超时"),
             _ => Vec::new(),
         }
     }
@@ -213,6 +216,9 @@ impl HandoffMachine {
         let Some(nonce) = crate::message::parse_nonce(nonce_hex) else {
             return Vec::new();
         };
+        if deadline_ms <= now_ms {
+            return Vec::new();
+        }
         if self.phase != Phase::Idle {
             return vec![Action::Send(GroupMessage::HandoffBusy {
                 nonce: nonce_hex.to_string(),
@@ -226,7 +232,7 @@ impl HandoffMachine {
         self.phase = Phase::Releasing {
             nonce,
             headphone: mac,
-            deadline_ms: deadline_ms.max(now_ms + HANDOFF_DEADLINE_MS),
+            deadline_ms: deadline_ms.min(now_ms.saturating_add(HANDOFF_DEADLINE_MS)),
         };
         info!(target: "edifier_group::handoff", "本机持有音频, 开始释放");
         vec![
@@ -247,6 +253,7 @@ impl HandoffMachine {
             return Vec::new();
         }
         if matches!(self.phase, Phase::WaitingRelease { .. }) {
+            self.peer_has_audio = true;
             vec![Action::Report(HandoffProgress::WaitingPeer)]
         } else {
             Vec::new()
@@ -257,12 +264,11 @@ impl HandoffMachine {
         if !self.nonce_matches(nonce_hex) {
             return Vec::new();
         }
-        match self.phase {
-            Phase::WaitingRelease { nonce, headphone, .. } => {
-                self.fallback_or_connect(nonce, headphone)
-            }
-            _ => Vec::new(),
+        if matches!(self.phase, Phase::WaitingRelease { .. }) {
+            // 广播组中一个成员无音频, 不能代表其他成员已经释放.
+            self.peer_has_no_audio = true;
         }
+        Vec::new()
     }
 
     fn on_released(&mut self, nonce_hex: &str) -> Vec<Action> {
@@ -320,6 +326,9 @@ impl HandoffMachine {
         if !self.nonce_matches(nonce_hex) {
             return Vec::new();
         }
+        if !matches!(self.phase, Phase::WaitingRelease { .. }) {
+            return Vec::new();
+        }
         self.phase = Phase::Idle;
         vec![Action::Report(HandoffProgress::Busy)]
     }
@@ -329,7 +338,7 @@ impl HandoffMachine {
             self.phase = Phase::WaitingFallbackGap {
                 nonce,
                 headphone,
-                ready_ms: now_ms + AUDIO_CONNECT_GAP_MS,
+                ready_ms: now_ms.saturating_add(AUDIO_CONNECT_GAP_MS),
             };
             info!(target: "edifier_group::handoff", "对端超时, 回退发送 CD");
             vec![
@@ -484,17 +493,66 @@ mod tests {
     }
 
     #[test]
-    fn no_audio_connects_directly() {
+    fn no_audio_waits_for_other_peers_until_deadline() {
         let mut requester = HandoffMachine::new("b");
         requester.claim(mac(), nonce(), 0);
         let actions = requester.on_message(
-            &GroupMessage::HandoffNoAudio {
-                nonce: nonce_hex(),
-            },
-            5,
+            &GroupMessage::HandoffNoAudio { nonce: nonce_hex() }, 5,
         );
-        assert!(actions
-            .iter()
+        assert!(actions.is_empty());
+        assert!(requester.tick(HANDOFF_DEADLINE_MS - 1).is_empty());
+        assert!(requester.tick(HANDOFF_DEADLINE_MS).iter()
             .any(|a| matches!(a, Action::ConnectAudio(_))));
+    }
+
+    #[test]
+    fn bystander_no_audio_does_not_override_holder() {
+        for bystander_first in [false, true] {
+            let mut requester = HandoffMachine::new("b");
+            requester.claim(mac(), nonce(), 0);
+            let holder = GroupMessage::HandoffHasAudio { nonce: nonce_hex() };
+            let bystander = GroupMessage::HandoffNoAudio { nonce: nonce_hex() };
+            let replies = if bystander_first { [bystander, holder] } else { [holder, bystander] };
+            for reply in replies {
+                assert!(!requester.on_message(&reply, 5).iter()
+                    .any(|a| matches!(a, Action::ConnectAudio(_))));
+            }
+            assert!(!requester.tick(HANDOFF_DEADLINE_MS).iter()
+                .any(|a| matches!(a, Action::ConnectAudio(_))));
+            assert_eq!(requester.phase(), Phase::Idle);
+        }
+    }
+
+    #[test]
+    fn releasing_failure_and_timeout_abort_and_restore() {
+        for timeout in [false, true] {
+            let mut holder = HandoffMachine::new("a");
+            holder.has_audio = true;
+            holder.on_message(&GroupMessage::HandoffRequest {
+                headphone: mac().to_colon_string(), nonce: nonce_hex(), deadline_ms: 100,
+            }, 0);
+            let actions = if timeout { holder.tick(100) } else { holder.on_audio_failed("断开失败") };
+            assert_eq!(holder.phase(), Phase::Idle);
+            assert!(holder.has_audio);
+            assert!(actions.iter().any(|a| matches!(a, Action::Send(GroupMessage::HandoffAbort { .. }))));
+            assert!(actions.iter().any(|a| matches!(a, Action::SuppressAutoreconnect { suppress: false, .. })));
+            assert!(!actions.iter().any(|a| matches!(a, Action::Send(GroupMessage::HandoffReleased { .. }))));
+        }
+    }
+
+    #[test]
+    fn remote_deadline_is_capped_and_expired_requests_are_ignored() {
+        let mut holder = HandoffMachine::new("a");
+        holder.has_audio = true;
+        let mut req = GroupMessage::HandoffRequest {
+            headphone: mac().to_colon_string(), nonce: nonce_hex(), deadline_ms: 10,
+        };
+        assert!(holder.on_message(&req, 10).is_empty());
+        assert_eq!(holder.phase(), Phase::Idle);
+        if let GroupMessage::HandoffRequest { deadline_ms, .. } = &mut req {
+            *deadline_ms = u64::MAX;
+        }
+        holder.on_message(&req, 10);
+        assert!(matches!(holder.phase(), Phase::Releasing { deadline_ms, .. } if deadline_ms == 10 + HANDOFF_DEADLINE_MS));
     }
 }

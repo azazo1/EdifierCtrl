@@ -48,10 +48,12 @@
 
 ## 会话
 
-`edifier_session_new` 打开平台蓝牙和后台 pump. `scan` / `connect` / `send_json` / `readout` 走 `HeadsetHost`. `connect` 成功后记下耳机地址, `group_join` 或之后会把它写入组 Announce 的 `holding`. `group_claim` 对耳机 MAC 发起交接. `group_claim_peer` 用成员 `id` 取其 `holding` 再 claim, 对应 UI 里点某个主机.
+`edifier_session_new` 创建会话, 成功连接控制通道后启动接收 pump. `scan` / `connect` / `send_json` / `readout` 走 `HeadsetHost`. `connect` 记录待观察的耳机地址, 只有平台确认实际音频连接后才在组 Announce 中宣告 `holding`. `group_claim` 对耳机 MAC 发起交接. `group_claim_peer` 用成员 `id` 取其 `holding` 再 claim, 对应 UI 里点某个主机.
 
-macOS 应用用 dlopen 加载 `libedifier_ffi.dylib`, 把 dylib 放在可执行文件旁即可. 同一进程里 Swift 导出 `edifier_macos_*`, Rust 用 `RTLD_DEFAULT` 找到 IOBluetooth 桥.
+`edifier_session_disconnect` 仅关闭控制通道, 不自动断开系统音频. `edifier_session_group_leave` 幂等退出组, 取消组后台任务和交接, 保留本机控制. `edifier_session_holding` 返回已确认持有的耳机地址, 未确认时返回空字符串. `edifier_session_free` 停止后台任务并释放控制通道, 调用方必须确保此后不再使用该句柄.
 
-`poll_event` 返回 `{"kind":"empty"}` 或 `bt_state` / `headset` / `peer` / `handoff`.
+macOS 的全部阻塞 FFI 调用均在独立串行队列执行, 不得在主线程同步等待, 包括会话释放. Swift 的 IOBluetooth 操作和 delegate 依赖主线程 run loop. 应用包从 `Contents/Frameworks/libedifier_ffi.dylib` 加载核心库, 裸二进制也可从同目录加载. Swift 导出 `edifier_macos_*`, Rust 用 `RTLD_DEFAULT` 找到原生桥, 可执行文件需要导出这些符号.
+
+`poll_event` 返回 `{"kind":"empty"}` 或 `bt_state` / `headset` / `audio` / `peer` / `handoff` / `message`. 控制连接, 系统音频与交接进度是不同状态, UI 不应互相推断成功.
 
 Android JNI 符号在 `dev.edifierctrl.app.EdifierNative`. 用 `cargo ndk` 编 `aarch64-linux-android` 后把 `libedifier_ffi.so` 放到 `apps/android/app/src/main/jniLibs/arm64-v8a/`.

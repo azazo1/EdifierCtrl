@@ -57,6 +57,10 @@ pub trait HeadsetTransport: Send + Sync {
 pub trait AudioControl: Send + Sync {
     async fn audio_state(&self, address: &str) -> Result<AudioState, TransportError>;
     async fn connect_audio(&self, address: &str) -> Result<(), TransportError>;
+    /// 在用户明确接管时选择输出路由, 默认由平台维持现有策略.
+    async fn select_output(&self, _address: &str) -> Result<(), TransportError> {
+        Ok(())
+    }
     async fn disconnect_audio(&self, address: &str) -> Result<(), TransportError>;
     async fn suppress_autoreconnect(
         &self,
@@ -72,6 +76,9 @@ impl<T: AudioControl + ?Sized> AudioControl for Arc<T> {
     }
     async fn connect_audio(&self, address: &str) -> Result<(), TransportError> {
         (**self).connect_audio(address).await
+    }
+    async fn select_output(&self, address: &str) -> Result<(), TransportError> {
+        (**self).select_output(address).await
     }
     async fn disconnect_audio(&self, address: &str) -> Result<(), TransportError> {
         (**self).disconnect_audio(address).await

@@ -1,37 +1,40 @@
-use std::sync::mpsc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use edifier_runtime::{AudioControl, AudioState, TransportError};
-use tokio::sync::Mutex;
-use tracing::{info, warn};
-use windows::core::Interface;
-use windows::Devices::Bluetooth::BluetoothDevice;
-use windows::Foundation::IClosable;
-use windows::Media::Audio::AudioPlaybackConnection;
-use windows::System::{DispatcherQueue, DispatcherQueueController, DispatcherQueueHandler};
+use tracing::info;
 
-use crate::a2dp;
-use crate::com::{parse_addr, win_err};
+use crate::{a2dp, com};
 
-/// 音频控制: 优先 Win32 A2DP 服务, WinRT 只在专用 DispatcherQueue 上调用.
+mod observed;
+pub(crate) mod services;
+mod state;
+
+/// 通过公开的服务开关请求连接, 通过系统音频端点确认实际状态.
 pub struct WindowsAudio {
-    claimed: Mutex<bool>,
-    winrt: Mutex<Option<WinrtPlayback>>,
-}
-
-struct WinrtPlayback {
-    queue: DispatcherQueue,
-    _ctrl: DispatcherQueueController,
-    conn: std::sync::Mutex<Option<AudioPlaybackConnection>>,
+    services: Arc<Mutex<services::ServiceState>>,
 }
 
 impl WindowsAudio {
     pub fn new() -> Self {
-        Self {
-            claimed: Mutex::new(false),
-            winrt: Mutex::new(None),
-        }
+        Self { services: Arc::new(Mutex::new(services::ServiceState::default())) }
+    }
+
+    async fn update_services(&self, address: &str, release: bool, connect: bool) -> Result<(), TransportError> {
+        let address = com::format_addr(com::parse_addr(address)?);
+        let services = self.services.clone();
+        com::blocking(move || {
+            // 锁在后台闭包内持有, 调用方超时取消后也不会与后续恢复交错.
+            let mut services = services.lock()
+                .map_err(|err| TransportError::Unavailable(format!("音频服务状态锁: {err}")))?;
+            if release {
+                services.disconnect(&a2dp::Win32Services, &address)?;
+            } else {
+                services.restore(&a2dp::Win32Services, &address, connect)?;
+            }
+            info!(target: "edifier_bt_windows", address, release, connect, "音频服务请求完成, 实际连接由系统确认");
+            Ok(())
+        }).await
     }
 }
 
@@ -43,55 +46,17 @@ impl Default for WindowsAudio {
 
 #[async_trait]
 impl AudioControl for WindowsAudio {
-    async fn audio_state(&self, _address: &str) -> Result<AudioState, TransportError> {
-        if *self.claimed.lock().await {
-            Ok(AudioState::Connected)
-        } else {
-            Ok(AudioState::Unknown)
-        }
+    async fn audio_state(&self, address: &str) -> Result<AudioState, TransportError> {
+        let address = address.to_string();
+        com::blocking(move || state::audio_state(&address)).await
     }
 
     async fn connect_audio(&self, address: &str) -> Result<(), TransportError> {
-        let addr = address.to_string();
-        match a2dp::set_a2dp(&addr, true) {
-            Ok(()) => {
-                *self.claimed.lock().await = true;
-                let acl = a2dp::a2dp_connected(&addr).unwrap_or(false);
-                info!(
-                    target: "edifier_bt_windows",
-                    address = %addr,
-                    acl,
-                    "Win32 已请求 A2DP 连接"
-                );
-                return Ok(());
-            }
-            Err(err) => {
-                warn!(
-                    target: "edifier_bt_windows",
-                    %err,
-                    address = %addr,
-                    "Win32 A2DP 连接失败"
-                );
-            }
-        }
-        if std::env::var("EDIFIER_WIN_AUDIO").as_deref() == Ok("1") {
-            self.connect_winrt(&addr).await?;
-            *self.claimed.lock().await = true;
-            return Ok(());
-        }
-        Err(TransportError::Unavailable(
-            "Windows 无法在无界面线程连接 A2DP. 设 EDIFIER_WIN_AUDIO=1 会试 WinRT, 本机上会访问冲突".into(),
-        ))
+        self.update_services(address, false, true).await
     }
 
     async fn disconnect_audio(&self, address: &str) -> Result<(), TransportError> {
-        self.close_winrt().await;
-        if let Err(err) = a2dp::set_a2dp(address, false) {
-            warn!(target: "edifier_bt_windows", %err, address, "Win32 A2DP 断开失败");
-        }
-        *self.claimed.lock().await = false;
-        info!(target: "edifier_bt_windows", address, "已请求断开 A2DP");
-        Ok(())
+        self.update_services(address, true, false).await
     }
 
     async fn suppress_autoreconnect(
@@ -99,108 +64,7 @@ impl AudioControl for WindowsAudio {
         address: &str,
         suppress: bool,
     ) -> Result<(), TransportError> {
-        warn!(
-            target: "edifier_bt_windows",
-            address,
-            suppress,
-            "Windows 没有公开的 A2DP 抑制重连接口"
-        );
-        if suppress {
-            let _ = self.disconnect_audio(address).await;
-        }
-        Ok(())
+        // Windows 无独立的抑制接口, 退出时恢复原服务可能触发系统自动重连.
+        self.update_services(address, suppress, false).await
     }
-}
-
-impl WindowsAudio {
-    async fn connect_winrt(&self, address: &str) -> Result<(), TransportError> {
-        let addr = address.to_string();
-        let queue = self.ensure_queue().await?;
-        let conn = on_queue(&queue, move || open_playback(&addr))?;
-        if let Some(playback) = self.winrt.lock().await.as_ref() {
-            *playback
-                .conn
-                .lock()
-                .map_err(|e| TransportError::Connect(e.to_string()))? = Some(conn);
-        }
-        info!(target: "edifier_bt_windows", address, "WinRT 音频已连接");
-        Ok(())
-    }
-
-    async fn close_winrt(&self) {
-        let guard = self.winrt.lock().await;
-        let Some(playback) = guard.as_ref() else {
-            return;
-        };
-        let queue = playback.queue.clone();
-        let taken = playback.conn.lock().ok().and_then(|mut g| g.take());
-        drop(guard);
-        if let Some(conn) = taken {
-            let _ = on_queue(&queue, move || close_playback(conn));
-        }
-    }
-
-    async fn ensure_queue(&self) -> Result<DispatcherQueue, TransportError> {
-        let mut slot = self.winrt.lock().await;
-        if slot.is_none() {
-            let ctrl = DispatcherQueueController::CreateOnDedicatedThread().map_err(win_err)?;
-            let queue = ctrl.DispatcherQueue().map_err(win_err)?;
-            *slot = Some(WinrtPlayback {
-                queue,
-                _ctrl: ctrl,
-                conn: std::sync::Mutex::new(None),
-            });
-        }
-        Ok(slot.as_ref().expect("刚写入").queue.clone())
-    }
-}
-
-fn on_queue<T, F>(queue: &DispatcherQueue, f: F) -> Result<T, TransportError>
-where
-    T: Send + 'static,
-    F: FnOnce() -> Result<T, TransportError> + Send + 'static,
-{
-    let (tx, rx) = mpsc::channel();
-    let mut job = Some(f);
-    let handler = DispatcherQueueHandler::new(move || {
-        if let Some(job) = job.take() {
-            let _ = tx.send(job());
-        }
-        Ok(())
-    });
-    if !queue.TryEnqueue(&handler).map_err(win_err)? {
-        return Err(TransportError::Connect("DispatcherQueue 拒绝入队".into()));
-    }
-    rx.recv_timeout(Duration::from_secs(20))
-        .map_err(|e| TransportError::Connect(format!("等待 DispatcherQueue: {e}")))?
-}
-
-fn close_playback(conn: AudioPlaybackConnection) -> Result<(), TransportError> {
-    let closable: IClosable = conn.cast().map_err(win_err)?;
-    closable.Close().map_err(win_err)
-}
-
-fn open_playback(address: &str) -> Result<AudioPlaybackConnection, TransportError> {
-    let addr = parse_addr(address)?;
-    let device = BluetoothDevice::FromBluetoothAddressAsync(addr)
-        .map_err(win_err)?
-        .get()
-        .map_err(win_err)?;
-    if device.as_raw().is_null() {
-        return Err(TransportError::NotFound(format!(
-            "没有蓝牙设备 {address}"
-        )));
-    }
-    let id = device.DeviceId().map_err(win_err)?;
-    info!(target: "edifier_bt_windows", id = %id, address, "打开 AudioPlaybackConnection");
-    let conn = AudioPlaybackConnection::TryCreateFromId(&id).map_err(win_err)?;
-    if conn.as_raw().is_null() {
-        return Err(TransportError::Unavailable(
-            "该设备没有 AudioPlaybackConnection".into(),
-        ));
-    }
-    conn.Start().map_err(win_err)?;
-    let op = conn.OpenAsync().map_err(win_err)?;
-    let _status = op.get().map_err(win_err)?;
-    Ok(conn)
 }

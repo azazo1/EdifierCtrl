@@ -47,7 +47,9 @@ char *edifier_handoff_on_audio_failed(EdifierHandoff *machine, const char *reaso
 
 typedef struct EdifierSession EdifierSession;
 EdifierSession *edifier_session_new(const char *local_id);
+/* 同一 session 的调用由宿主串行执行. 阻塞调用和销毁不得占用 macOS main runloop. */
 void edifier_session_free(EdifierSession *session);
+void edifier_session_destroy(EdifierSession *session);
 char *edifier_session_scan(EdifierSession *session, const char *kind);
 int edifier_session_connect(EdifierSession *session, const char *address, const char *kind);
 int edifier_session_disconnect(EdifierSession *session);
@@ -55,6 +57,8 @@ int edifier_session_readout(EdifierSession *session, const char *profile_key);
 int edifier_session_send_json(EdifierSession *session, const char *command_json);
 char *edifier_session_poll_event(EdifierSession *session);
 int edifier_session_group_join(EdifierSession *session, const char *passphrase);
+/* 幂等退出组并清理交接, 保留系统音频连接. */
+int edifier_session_group_leave(EdifierSession *session);
 char *edifier_session_group_peers(EdifierSession *session);
 int edifier_session_group_claim(EdifierSession *session, const char *mac);
 int edifier_session_group_claim_peer(EdifierSession *session, const char *peer_id);

@@ -13,4 +13,6 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-bluer = { version = "0.17", features = ["bluetoothd"] }
+bluer = { version = "0.17", features = ["bluetoothd", "rfcomm"] }
+dbus = { version = "0.9", features = ["futures"] }
+dbus-tokio = "0.7"

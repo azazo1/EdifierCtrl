@@ -67,6 +67,7 @@ pub async fn listen_group(
     if let Some(mac) = connect {
         info!(target: "edifier_cli", mac, "连接控制通道并认领音频");
         host.connect(mac, kind).await?;
+        hub.set_control_address(Some(mac.to_string())).await;
         hub.adopt_headset(Some(mac.to_string())).await;
         println!("holding={mac}");
         if let Err(err) = host.send(&Command::QueryBattery).await {

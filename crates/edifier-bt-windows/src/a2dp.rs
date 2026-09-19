@@ -1,5 +1,4 @@
-//! Win32 开关本机到耳机的 A2DP 服务.
-//! AudioPlaybackConnection.TryCreateFromId 在本机即使用 DispatcherQueue 也会访问冲突.
+//! 通过公开 Win32 API 开关远端音频服务, 服务启用不代表音频已连接.
 
 use std::mem::size_of;
 
@@ -7,64 +6,87 @@ use edifier_runtime::TransportError;
 use tracing::{info, warn};
 use windows::core::GUID;
 use windows::Win32::Devices::Bluetooth::{
-    BluetoothFindDeviceClose, BluetoothFindFirstDevice, BluetoothFindFirstRadio,
+    BluetoothEnumerateInstalledServices, BluetoothFindDeviceClose, BluetoothFindFirstDevice, BluetoothFindFirstRadio,
     BluetoothFindRadioClose, BluetoothGetDeviceInfo, BluetoothSetServiceState, BLUETOOTH_ADDRESS,
     BLUETOOTH_ADDRESS_0, BLUETOOTH_DEVICE_INFO, BLUETOOTH_DEVICE_SEARCH_PARAMS,
     BLUETOOTH_FIND_RADIO_PARAMS, BLUETOOTH_SERVICE_DISABLE, BLUETOOTH_SERVICE_ENABLE,
 };
 use windows::Win32::Foundation::{CloseHandle, BOOL, HANDLE, TRUE};
 
+use crate::audio::services::{AudioService, ServiceControl};
 use crate::com::parse_addr;
 use crate::com::win_err;
 
 const A2DP_SINK: GUID = GUID::from_u128(0x0000_110b_0000_1000_8000_0080_5f9b_34fb);
-const A2DP_SOURCE: GUID = GUID::from_u128(0x0000_110a_0000_1000_8000_0080_5f9b_34fb);
-const AVRCP: GUID = GUID::from_u128(0x0000_110e_0000_1000_8000_0080_5f9b_34fb);
 const HANDSFREE: GUID = GUID::from_u128(0x0000_111e_0000_1000_8000_0080_5f9b_34fb);
+const HEADSET: GUID = GUID::from_u128(0x0000_1108_0000_1000_8000_0080_5f9b_34fb);
 
-pub fn set_a2dp(address: &str, enable: bool) -> Result<(), TransportError> {
+const AUDIO_SERVICES: [(AudioService, GUID); 3] = [
+    (AudioService::A2dp, A2DP_SINK),
+    (AudioService::Handsfree, HANDSFREE),
+    (AudioService::Headset, HEADSET),
+];
+
+pub struct Win32Services;
+
+impl ServiceControl for Win32Services {
+    fn enabled(&self, address: &str) -> Result<Vec<AudioService>, TransportError> {
+        enabled_audio_services(address)
+    }
+
+    fn set(&self, address: &str, service: AudioService, enable: bool) -> Result<(), TransportError> {
+        let addr = parse_addr(address)?;
+        let guid = AUDIO_SERVICES.iter().find(|(candidate, _)| *candidate == service)
+            .expect("音频服务枚举完整").1;
+        let flag = if enable { BLUETOOTH_SERVICE_ENABLE } else { BLUETOOTH_SERVICE_DISABLE };
+        with_radio(|radio| {
+            let info = find_device(radio, addr)?;
+            let rc = unsafe { BluetoothSetServiceState(radio, &info, &guid, flag) };
+            // 有效 flags 下 E_INVALIDARG 表示服务已经处于请求的启用状态.
+            if rc == 0 || rc == windows::Win32::Foundation::E_INVALIDARG.0 as u32 {
+                info!(target: "edifier_bt_windows", address, enable, ?service, "已请求蓝牙音频服务状态");
+                Ok(())
+            } else {
+                warn!(target: "edifier_bt_windows", address, ?service, win32 = rc, "BluetoothSetServiceState 失败");
+                Err(TransportError::Connect(format!("BluetoothSetServiceState {service:?} win32={rc}")))
+            }
+        })
+    }
+}
+
+pub fn enabled_audio_services(address: &str) -> Result<Vec<AudioService>, TransportError> {
     let addr = parse_addr(address)?;
-    let flag = if enable {
-        BLUETOOTH_SERVICE_ENABLE
-    } else {
-        BLUETOOTH_SERVICE_DISABLE
-    };
     with_radio(|radio| {
         let info = find_device(radio, addr)?;
-        let mut last = 0u32;
-        for (name, guid) in [
-            ("a2dp-sink", A2DP_SINK),
-            ("a2dp-source", A2DP_SOURCE),
-            ("avrcp", AVRCP),
-            ("handsfree", HANDSFREE),
-        ] {
-            let rc = unsafe { BluetoothSetServiceState(radio, &info, &guid, flag) };
-            if rc == 0 {
-                info!(
-                    target: "edifier_bt_windows",
-                    address,
-                    enable,
-                    service = name,
-                    "已设置蓝牙音频服务"
-                );
-                return Ok(());
-            }
-            last = rc;
-            warn!(
-                target: "edifier_bt_windows",
-                address,
-                service = name,
-                win32 = rc,
-                "BluetoothSetServiceState 失败"
-            );
+        let mut count = 0;
+        let rc = unsafe { BluetoothEnumerateInstalledServices(radio, &info, &mut count, None) };
+        let more = windows::Win32::Foundation::ERROR_MORE_DATA.0;
+        if rc != 0 && rc != more {
+            return Err(TransportError::Unavailable(format!("枚举已启用音频服务 win32={rc}")));
         }
-        Err(TransportError::Connect(format!(
-            "BluetoothSetServiceState 全部失败 last={last}"
-        )))
+        for _ in 0..3 {
+            if count == 0 {
+                return Ok(Vec::new());
+            }
+            let mut guids = vec![GUID::zeroed(); count as usize];
+            let rc = unsafe {
+                BluetoothEnumerateInstalledServices(radio, &info, &mut count, Some(guids.as_mut_ptr()))
+            };
+            if rc == 0 {
+                guids.truncate(count as usize);
+                return Ok(AUDIO_SERVICES.iter().filter_map(|(service, guid)| {
+                    guids.contains(guid).then_some(*service)
+                }).collect());
+            }
+            if rc != more {
+                return Err(TransportError::Unavailable(format!("枚举已启用音频服务 win32={rc}")));
+            }
+        }
+        Err(TransportError::Unavailable("音频服务列表持续变化".into()))
     })
 }
 
-pub fn a2dp_connected(address: &str) -> Result<bool, TransportError> {
+pub fn acl_connected(address: &str) -> Result<bool, TransportError> {
     let addr = parse_addr(address)?;
     with_radio(|radio| {
         let info = find_device(radio, addr)?;

@@ -6,7 +6,7 @@
 
 ## 现状
 
-核心库, C ABI 会话, Windows / Linux / Android / macOS 蓝牙适配和局域网交接已可编译. 四端界面已接到扫描 / 连接 / 控制 / 组 / 调试. Android 用 `just android build`, macOS 用 `just macos build` (会把 `libedifier_ffi.dylib` 放到可执行文件旁).
+核心库, C ABI 会话, Windows / Linux / Android / macOS 蓝牙适配和局域网交接已接通. Android 用 `just android build`. macOS 提供 SwiftUI 设备工作台, 菜单栏后台驻留和交接进度, 用 `just macos build` 生成完整 `.app`; 使用和平台限制见 [macOS 桌面端](docs/macos.md).
 
 - `edifier-protocol` / `edifier-session` / `edifier-group` / `edifier-runtime`
 - `edifier-ffi`: C ABI, 头文件 `crates/edifier-ffi/include/edifier.h`, 说明见 `docs/ffi.md`

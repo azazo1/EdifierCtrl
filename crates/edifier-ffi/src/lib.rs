@@ -6,6 +6,10 @@ mod command_json;
 mod cstr;
 mod event_json;
 mod notify_json;
+#[cfg(not(test))]
+mod platform;
+#[cfg(test)]
+#[path = "test_platform.rs"]
 mod platform;
 mod profiles;
 mod session;
@@ -129,14 +133,14 @@ mod tests {
     }
 
     #[test]
-    fn set_holding_roundtrip() {
+    fn set_holding_does_not_invent_audio_connection() {
         let id = cstr("ui-test");
         let session = edifier_session_new(id.as_ptr());
         assert!(!session.is_null(), "{}", last_error());
         let mac = cstr("AA:BB:CC:DD:EE:FF");
         assert_eq!(edifier_session_set_holding(session, mac.as_ptr()), 0);
         let got = take(edifier_session_holding(session));
-        assert_eq!(got, "AA:BB:CC:DD:EE:FF");
+        assert_eq!(got, "");
         unsafe { edifier_session_free(session) };
     }
 

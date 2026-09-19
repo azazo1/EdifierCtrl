@@ -359,6 +359,8 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "bluer",
+ "dbus",
+ "dbus-tokio",
  "edifier-protocol",
  "edifier-runtime",
  "tokio",

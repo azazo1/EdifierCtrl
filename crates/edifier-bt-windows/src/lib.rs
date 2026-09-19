@@ -6,6 +6,12 @@ mod a2dp;
 mod addr;
 #[cfg(windows)]
 mod audio;
+#[cfg(all(test, not(windows)))]
+#[path = "audio/observed.rs"]
+mod audio_observed;
+#[cfg(all(test, not(windows)))]
+#[path = "audio/services.rs"]
+mod audio_services;
 #[cfg(windows)]
 mod ble;
 #[cfg(windows)]

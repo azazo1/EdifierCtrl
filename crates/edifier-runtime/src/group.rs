@@ -1,20 +1,24 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use edifier_protocol::AUDIO_CONNECT_GAP_MS;
 use edifier_group::{
     derive_group, open, seal, Action, GroupId, GroupKey, GroupMessage, HandoffMachine,
-    HandoffProgress, MacAddr, PeerInfo,
+    HandoffProgress, MacAddr, PeerInfo, Phase,
 };
-use tokio::sync::{broadcast, Mutex};
-use tokio::time::{interval, Duration};
+use tokio::sync::{broadcast, watch, Mutex};
+use tokio::time::{interval, Duration, Instant};
 use tracing::{debug, info, warn};
 
 use crate::cd::CdFallback;
 use crate::events::RuntimeEvent;
 use crate::net::{Datagram, GroupNet};
 use crate::transport::{AudioControl, AudioState, TransportError};
+
+mod actions;
+use actions::OperationState;
+
+const PEER_TTL: Duration = Duration::from_secs(6);
 
 pub fn now_ms() -> u64 {
     SystemTime::now()
@@ -36,11 +40,14 @@ pub struct GroupHub<N: GroupNet, A: AudioControl> {
     net: N,
     audio: A,
     cd: Option<Arc<dyn CdFallback>>,
+    // 状态转换与外部副作用共用此锁, runner 取消后保留待恢复记录.
+    operation: Mutex<OperationState>,
+    closed: watch::Sender<bool>,
     machine: Mutex<HandoffMachine>,
     gid: GroupId,
     key: GroupKey,
     peer: Mutex<PeerInfo>,
-    peers: Mutex<HashMap<String, PeerInfo>>,
+    peers: Mutex<HashMap<String, (PeerInfo, Instant)>>,
     events: broadcast::Sender<RuntimeEvent>,
 }
 
@@ -54,31 +61,24 @@ impl<N: GroupNet, A: AudioControl> GroupHub<N, A> {
     ) -> Self {
         let (gid, key) = derive_group(passphrase);
         let local_id = local_id.into();
-        let mut machine = HandoffMachine::new(local_id.clone());
-        machine.can_control_headset = cd.is_some();
+        let machine = HandoffMachine::new(local_id.clone());
         let host = hostname();
         let peer = PeerInfo {
             id: local_id.clone(),
-            hostname: if host == "unknown" {
-                local_id
-            } else {
-                host
-            },
+            hostname: if host == "unknown" { local_id } else { host },
             os: std::env::consts::OS.into(),
             can_audio: true,
             holding: None,
             app_version: env!("CARGO_PKG_VERSION").into(),
         };
         let (events, _) = broadcast::channel(64);
-        info!(
-            target: "edifier_runtime",
-            id = %peer.id,
-            group = %gid.to_hex(),
-            "加入局域网组"
-        );
+        let (closed, _) = watch::channel(false);
+        info!(target: "edifier_runtime", id = %peer.id, group = %gid.to_hex(), "加入局域网组");
         Self {
             net,
             audio,
+            operation: Mutex::new(OperationState::new(cd.is_some())),
+            closed,
             cd,
             machine: Mutex::new(machine),
             gid,
@@ -106,50 +106,99 @@ impl<N: GroupNet, A: AudioControl> GroupHub<N, A> {
     }
 
     pub async fn peers(&self) -> Vec<PeerInfo> {
-        self.peers.lock().await.values().cloned().collect()
+        self.peers_at(Instant::now()).await
+    }
+
+    async fn peers_at(&self, now: Instant) -> Vec<PeerInfo> {
+        let mut peers = self.peers.lock().await;
+        peers.retain(|id, (_, seen_at)| {
+            let alive = now.saturating_duration_since(*seen_at) < PEER_TTL;
+            if !alive {
+                info!(target: "edifier_runtime", peer = %id, "组成员心跳超时");
+            }
+            alive
+        });
+        peers.values().map(|(peer, _)| peer.clone()).collect()
     }
 
     pub async fn set_has_audio(&self, has: bool) {
-        self.machine.lock().await.has_audio = has;
+        let _operation = self.operation.lock().await;
+        if !*self.closed.borrow() {
+            self.machine.lock().await.has_audio = has;
+        }
     }
 
     pub async fn set_can_control(&self, can: bool) {
-        self.machine.lock().await.can_control_headset = can;
-    }
-
-    pub async fn set_holding(&self, mac: Option<String>) {
-        info!(
-            target: "edifier_runtime",
-            holding = mac.as_deref().unwrap_or("-"),
-            "更新本机持有的耳机"
-        );
-        self.peer.lock().await.holding = mac;
-        self.announce().await;
-    }
-
-    /// 控制通道连上后认领耳机: 已连 A2DP 则记下, 否则尝试连接, 并标 has_audio, 对端 claim 才会让本机断开.
-    pub async fn adopt_headset(&self, mac: Option<String>) {
-        match mac {
-            None => {
-                self.machine.lock().await.has_audio = false;
-                self.set_holding(None).await;
-            }
-            Some(mac) => {
-                let connected = match self.audio.audio_state(&mac).await {
-                    Ok(AudioState::Connected) => true,
-                    _ => self.audio.connect_audio(&mac).await.is_ok(),
-                };
-                if !connected {
-                    warn!(
-                        target: "edifier_runtime",
-                        address = %mac,
-                        "未能接管 A2DP, 仍标记持有, claim 时会尝试断开"
-                    );
-                }
-                self.machine.lock().await.has_audio = true;
-                self.set_holding(Some(mac)).await;
-            }
+        let mut operation = self.operation.lock().await;
+        if !*self.closed.borrow() {
+            operation.can_control = can;
+            self.update_control_capability(&operation).await;
         }
+    }
+
+    /// 绑定 CD 实际作用的控制通道地址, 与音频持有状态分别管理.
+    pub async fn set_control_address(&self, mac: Option<String>) {
+        let mut operation = self.operation.lock().await;
+        if !*self.closed.borrow() {
+            operation.control_address = mac.as_deref().and_then(|s| MacAddr::parse(s).ok());
+            self.update_control_capability(&operation).await;
+        }
+    }
+
+    /// 仅发布经平台确认的音频持有状态, 不发起连接.
+    pub async fn set_holding(&self, mac: Option<String>) {
+        let _operation = self.operation.lock().await;
+        if *self.closed.borrow() {
+            return;
+        }
+        let mac = mac.as_deref().and_then(|s| MacAddr::parse(s).ok());
+        let holding = if let Some(mac) = mac {
+            let addr = mac.to_colon_string();
+            matches!(
+                tokio::time::timeout(Duration::from_secs(3), self.audio.audio_state(&addr)).await,
+                Ok(Ok(AudioState::Connected))
+            ).then_some(addr)
+        } else {
+            None
+        };
+        self.update_holding(holding).await;
+        self.announce_inner().await;
+    }
+
+    /// 尝试接管音频, 只有平台确认 Connected 后才认领地址.
+    pub async fn adopt_headset(&self, mac: Option<String>) {
+        let mut operation = self.operation.lock().await;
+        if *self.closed.borrow() {
+            return;
+        }
+        let mac = match mac {
+            Some(mac) => match MacAddr::parse(&mac) {
+                Ok(mac) => Some(mac),
+                Err(err) => {
+                    warn!(target: "edifier_runtime", %err, "忽略无效耳机地址");
+                    return;
+                }
+            },
+            None => None,
+        };
+        if self.machine.lock().await.phase() != Phase::Idle {
+            debug!(target: "edifier_runtime", "交接期间暂不重新接管音频");
+            return;
+        }
+        let holding = if let Some(mac) = mac {
+            let addr = mac.to_colon_string();
+            match self.connect_verified(&mut operation, mac).await {
+                Ok(_) => Some(addr),
+                Err(err) => {
+                    warn!(target: "edifier_runtime", %err, address = %addr, "未能确认音频连接");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        self.update_holding(holding).await;
+        self.announce_inner().await;
     }
 
     pub async fn has_audio(&self) -> bool {
@@ -157,7 +206,24 @@ impl<N: GroupNet, A: AudioControl> GroupHub<N, A> {
     }
 
     pub async fn holding(&self) -> Option<String> {
-        self.peer.lock().await.holding.clone()
+        // 纯读不等待交接副作用锁, 避免阻塞 UI 的事件轮询和退出请求.
+        self.verified_holding().await
+    }
+
+    async fn verified_holding(&self) -> Option<String> {
+        if *self.closed.borrow() { return None; }
+        let addr = self.peer.lock().await.holding.clone()?;
+        let connected = matches!(
+            tokio::time::timeout(Duration::from_secs(3), self.audio.audio_state(&addr)).await,
+            Ok(Ok(AudioState::Connected))
+        );
+        // 核验期间可能离组或切换目标, 不能发布上一目标的迟到结果.
+        if connected && !*self.closed.borrow()
+            && self.peer.lock().await.holding.as_ref() == Some(&addr) {
+            Some(addr)
+        } else {
+            None
+        }
     }
 
     pub async fn claim(&self, headphone: &str) -> Result<(), TransportError> {
@@ -171,43 +237,98 @@ impl<N: GroupNet, A: AudioControl> GroupHub<N, A> {
         now: u64,
     ) -> Result<(), TransportError> {
         let mac = MacAddr::parse(headphone).map_err(|e| TransportError::NotFound(e.to_string()))?;
+        let mut operation = self.operation.lock().await;
+        self.ensure_open()?;
+        {
+            let mut machine = self.machine.lock().await;
+            if machine.phase() == Phase::Idle {
+                machine.can_control_headset = operation.can_control
+                    && self.cd.is_some() && operation.control_address == Some(mac);
+            }
+        }
         info!(target: "edifier_runtime", mac = %mac.to_colon_string(), "请求接管音频");
         let actions = self.machine.lock().await.claim(mac, nonce, now);
-        self.apply(actions).await;
-        Ok(())
+        self.apply(&mut operation, actions).await
     }
 
     pub async fn tick_at(&self, now: u64) {
+        let mut operation = self.operation.lock().await;
+        if *self.closed.borrow() {
+            return;
+        }
         let actions = self.machine.lock().await.tick(now);
-        self.apply(actions).await;
+        if let Err(err) = self.apply(&mut operation, actions).await {
+            warn!(target: "edifier_runtime", %err, "交接定时动作失败");
+        }
     }
 
     pub async fn announce(&self) {
-        let peer = self.peer.lock().await.clone();
-        self.broadcast(GroupMessage::Announce { peer }).await;
+        let _operation = self.operation.lock().await;
+        if !*self.closed.borrow() {
+            self.announce_inner().await;
+        }
+    }
+
+    /// 离组不主动断音频. 失败的重连抑制恢复会保留, 再次调用时重试.
+    pub async fn leave(&self) -> Result<(), TransportError> {
+        let mut operation = self.operation.lock().await;
+        let was_closed = self.closed.send_replace(true);
+        let actions = self.machine.lock().await.on_audio_failed("已离开局域网组");
+        self.update_holding(None).await;
+        self.peers.lock().await.clear();
+        operation.control_address = None;
+        operation.can_control = false;
+        self.machine.lock().await.can_control_headset = false;
+        let mut error = None;
+        for action in actions {
+            match action {
+                Action::Send(msg) => {
+                    if let Err(err) = self.broadcast(msg).await {
+                        error.get_or_insert(err);
+                    }
+                }
+                Action::Report(progress) => {
+                    let _ = self.events.send(RuntimeEvent::Handoff(progress));
+                }
+                _ => {}
+            }
+        }
+        // 不依赖当前 phase: 即使 runner 在平台调用中被 abort 也必须恢复.
+        for mac in operation.suppressed.iter().copied().collect::<Vec<_>>() {
+            if let Err(err) = self.suppress(&mut operation, mac, false).await {
+                error.get_or_insert(err);
+            }
+        }
+        if !was_closed {
+            let peer = self.peer.lock().await.clone();
+            if let Err(err) = self.broadcast(GroupMessage::Announce { peer }).await {
+                error.get_or_insert(err);
+            }
+        }
+        error.map_or(Ok(()), Err)
     }
 
     pub async fn pump_one(&self) -> Result<(), TransportError> {
+        self.ensure_open()?;
         let bytes = self.net.recv().await?;
         self.dispatch(&bytes).await;
         Ok(())
     }
 
     pub async fn run(&self) -> Result<(), TransportError> {
+        let mut closed = self.closed.subscribe();
+        if *closed.borrow() {
+            return Ok(());
+        }
         self.announce().await;
         let mut tick = interval(Duration::from_millis(200));
         let mut hello = interval(Duration::from_secs(2));
         loop {
             tokio::select! {
-                bytes = self.net.recv() => {
-                    self.dispatch(&bytes?).await;
-                }
-                _ = tick.tick() => {
-                    self.tick_at(now_ms()).await;
-                }
-                _ = hello.tick() => {
-                    self.announce().await;
-                }
+                _ = closed.changed() => return Ok(()),
+                bytes = self.net.recv() => self.dispatch(&bytes?).await,
+                _ = tick.tick() => self.tick_at(now_ms()).await,
+                _ = hello.tick() => self.announce().await,
             }
         }
     }
@@ -231,151 +352,73 @@ impl<N: GroupNet, A: AudioControl> GroupHub<N, A> {
                 return;
             }
         };
-        if let GroupMessage::Announce { peer } = &msg {
-            info!(
-                target: "edifier_runtime",
-                peer = %peer.id,
-                host = %peer.hostname,
-                "发现组员"
-            );
-            self.peers
-                .lock()
-                .await
-                .insert(peer.id.clone(), peer.clone());
-            let _ = self.events.send(RuntimeEvent::Peer(peer.clone()));
+        let mut operation = self.operation.lock().await;
+        if *self.closed.borrow() {
+            return;
         }
-        if matches!(msg, GroupMessage::HandoffRequest { .. })
-            && self.peer.lock().await.holding.is_some()
-        {
+        if let GroupMessage::Announce { peer } = &msg {
+            let mut peer = peer.clone();
+            peer.holding = peer.holding.as_deref()
+                .and_then(|s| MacAddr::parse(s).ok()).map(MacAddr::to_colon_string);
+            self.peers.lock().await.insert(peer.id.clone(), (peer.clone(), Instant::now()));
+            let _ = self.events.send(RuntimeEvent::Peer(peer));
+        }
+        if let GroupMessage::HandoffRequest { headphone, nonce, deadline_ms } = &msg {
+            let Ok(mac) = MacAddr::parse(headphone) else { return };
+            if *deadline_ms <= now || edifier_group::message::parse_nonce(nonce).is_none() {
+                return;
+            }
+            if self.peer.lock().await.holding.as_deref() != Some(&mac.to_colon_string()) {
+                if let Err(err) = self.broadcast(GroupMessage::HandoffNoAudio {
+                    nonce: nonce.clone(),
+                }).await {
+                    warn!(target: "edifier_runtime", %err, "发送无音频回复失败");
+                }
+                return;
+            }
             self.machine.lock().await.has_audio = true;
         }
         let actions = self.machine.lock().await.on_message(&msg, now);
-        self.apply(actions).await;
-    }
-
-    async fn apply(&self, actions: Vec<Action>) {
-        let mut q: VecDeque<Action> = actions.into();
-        while let Some(action) = q.pop_front() {
-            let more = match action {
-                Action::Send(msg) => {
-                    self.broadcast(msg).await;
-                    Vec::new()
-                }
-                Action::ConnectAudio(mac) => {
-                    let addr = mac.to_colon_string();
-                    match self.audio.connect_audio(&addr).await {
-                        Ok(()) => {
-                            self.peer.lock().await.holding = Some(addr);
-                            self.machine.lock().await.on_audio_connected()
-                        }
-                        Err(err) => self.machine.lock().await.on_audio_failed(&err.to_string()),
-                    }
-                }
-                Action::DisconnectAudio(mac) => {
-                    let addr = mac.to_colon_string();
-                    if let Err(err) = self.audio.disconnect_audio(&addr).await {
-                        warn!(target: "edifier_runtime", %err, "断开音频失败");
-                    }
-                    let still = self
-                        .audio
-                        .audio_state(&addr)
-                        .await
-                        .unwrap_or(AudioState::Unknown);
-                    if cfg!(target_os = "android")
-                        || !matches!(still, AudioState::Disconnected)
-                    {
-                        if let Some(cd) = &self.cd {
-                            info!(
-                                target: "edifier_runtime",
-                                address = %addr,
-                                "系统层未真正断开 A2DP, 发送 CD"
-                            );
-                            if let Err(err) = cd.send_headset_disconnect().await {
-                                warn!(target: "edifier_runtime", %err, "CD 失败");
-                            } else {
-                                tokio::time::sleep(Duration::from_millis(
-                                    AUDIO_CONNECT_GAP_MS,
-                                ))
-                                .await;
-                            }
-                        }
-                    }
-                    let still = self
-                        .audio
-                        .audio_state(&addr)
-                        .await
-                        .unwrap_or(AudioState::Unknown);
-                    if matches!(still, AudioState::Connected) {
-                        warn!(
-                            target: "edifier_runtime",
-                            address = %addr,
-                            "A2DP 仍连接, 不发送 Released"
-                        );
-                        vec![Action::Report(HandoffProgress::Failed(
-                            "未能断开 A2DP".into(),
-                        ))]
-                    } else {
-                        self.peer.lock().await.holding = None;
-                        self.machine.lock().await.on_audio_disconnected()
-                    }
-                }
-                Action::SuppressAutoreconnect { mac, suppress } => {
-                    let addr = mac.to_colon_string();
-                    if let Err(err) = self
-                        .audio
-                        .suppress_autoreconnect(&addr, suppress)
-                        .await
-                    {
-                        warn!(target: "edifier_runtime", %err, "抑制重连失败");
-                    }
-                    Vec::new()
-                }
-                Action::SendHeadsetDisconnect => {
-                    if let Some(cd) = &self.cd {
-                        if let Err(err) = cd.send_headset_disconnect().await {
-                            warn!(target: "edifier_runtime", %err, "CD 失败");
-                        }
-                    } else {
-                        warn!(target: "edifier_runtime", "没有控制通道, 无法发 CD");
-                    }
-                    Vec::new()
-                }
-                Action::Report(progress) => {
-                    if matches!(progress, HandoffProgress::Done) {
-                        info!(target: "edifier_runtime", "交接完成");
-                    }
-                    let _ = self.events.send(RuntimeEvent::Handoff(progress));
-                    Vec::new()
-                }
-            };
-            for a in more.into_iter().rev() {
-                q.push_front(a);
-            }
+        if let Err(err) = self.apply(&mut operation, actions).await {
+            warn!(target: "edifier_runtime", %err, "执行交接报文失败");
         }
     }
 
-    async fn broadcast(&self, msg: GroupMessage) {
-        let env = match seal(&self.key, self.gid, now_ms(), msg) {
-            Ok(v) => v,
-            Err(err) => {
-                warn!(target: "edifier_runtime", ?err, "封装组报文失败");
-                return;
-            }
-        };
+    fn ensure_open(&self) -> Result<(), TransportError> {
+        if *self.closed.borrow() { Err(TransportError::Closed) } else { Ok(()) }
+    }
+
+    async fn update_holding(&self, holding: Option<String>) {
+        self.machine.lock().await.has_audio = holding.is_some();
+        self.peer.lock().await.holding = holding;
+    }
+
+    async fn update_control_capability(&self, operation: &OperationState) {
+        let mut machine = self.machine.lock().await;
+        let target = actions::phase_mac(machine.phase()).or(operation.control_address);
+        machine.can_control_headset = operation.can_control && self.cd.is_some()
+            && operation.control_address.is_some() && operation.control_address == target;
+    }
+
+    async fn announce_inner(&self) {
+        let mut peer = self.peer.lock().await.clone();
+        peer.holding = self.verified_holding().await;
+        if let Err(err) = self.broadcast(GroupMessage::Announce { peer }).await {
+            warn!(target: "edifier_runtime", %err, "广播组状态失败");
+        }
+    }
+
+    async fn broadcast(&self, msg: GroupMessage) -> Result<(), TransportError> {
+        let env = seal(&self.key, self.gid, now_ms(), msg)
+            .map_err(|err| TransportError::Write(format!("{err:?}")))?;
         let dg = Datagram {
             from: self.peer.lock().await.id.clone(),
             envelope: env,
         };
-        let bytes = match serde_json::to_vec(&dg) {
-            Ok(v) => v,
-            Err(err) => {
-                warn!(target: "edifier_runtime", %err, "序列化组报文失败");
-                return;
-            }
-        };
-        if let Err(err) = self.net.send(&bytes).await {
-            warn!(target: "edifier_runtime", %err, "发送组报文失败");
-        }
+        let bytes = serde_json::to_vec(&dg)
+            .map_err(|err| TransportError::Write(err.to_string()))?;
+        tokio::time::timeout(Duration::from_secs(3), self.net.send(&bytes))
+            .await.map_err(|_| TransportError::Write("发送组报文超时".into()))?
     }
 }
 
@@ -386,101 +429,4 @@ fn hostname() -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::cd::MockCd;
-    use crate::mock::MockAudio;
-    use crate::net::LoopbackNet;
-    use crate::transport::AudioState;
-    use edifier_protocol::AUDIO_CONNECT_GAP_MS;
-    use edifier_group::HANDOFF_DEADLINE_MS;
-
-    const MAC: &str = "11:22:33:44:55:66";
-
-    fn nonce() -> [u8; 16] {
-        [7u8; 16]
-    }
-
-    #[tokio::test]
-    async fn holder_releases_then_peer_takes() {
-        let (net_a, net_b) = LoopbackNet::pair();
-        let a = GroupHub::new("lan", "host-a", net_a, MockAudio::new(), None);
-        let b = GroupHub::new("lan", "host-b", net_b, MockAudio::new(), None);
-        a.audio().connect_audio(MAC).await.unwrap();
-        a.set_has_audio(true).await;
-
-        b.claim_at(MAC, nonce(), 10).await.unwrap();
-        a.pump_one().await.unwrap();
-        b.pump_one().await.unwrap();
-        b.pump_one().await.unwrap();
-        a.pump_one().await.unwrap();
-
-        assert_eq!(
-            b.audio().audio_state(MAC).await.unwrap(),
-            AudioState::Connected
-        );
-        assert_eq!(
-            a.audio().audio_state(MAC).await.unwrap(),
-            AudioState::Disconnected
-        );
-    }
-
-    #[tokio::test]
-    async fn silent_holder_falls_back_to_cd() {
-        let (net_a, net_b) = LoopbackNet::pair();
-        let cd = Arc::new(MockCd::new());
-        let _a = GroupHub::new("lan", "host-a", net_a, MockAudio::new(), None);
-        let b = GroupHub::new(
-            "lan",
-            "host-b",
-            net_b,
-            MockAudio::new(),
-            Some(cd.clone()),
-        );
-        b.set_can_control(true).await;
-        b.claim_at(MAC, nonce(), 0).await.unwrap();
-        b.tick_at(HANDOFF_DEADLINE_MS).await;
-        assert_eq!(cd.count(), 1);
-        b.tick_at(HANDOFF_DEADLINE_MS + AUDIO_CONNECT_GAP_MS).await;
-        assert_eq!(
-            b.audio().audio_state(MAC).await.unwrap(),
-            AudioState::Connected
-        );
-    }
-
-    #[tokio::test]
-    async fn adopt_headset_makes_holder_release() {
-        let (net_a, net_b) = LoopbackNet::pair();
-        let a = GroupHub::new("lan", "host-a", net_a, MockAudio::new(), None);
-        let b = GroupHub::new("lan", "host-b", net_b, MockAudio::new(), None);
-        a.adopt_headset(Some(MAC.into())).await;
-        assert!(a.has_audio().await);
-        b.pump_one().await.unwrap();
-        b.claim_at(MAC, nonce(), 10).await.unwrap();
-        a.pump_one().await.unwrap();
-        b.pump_one().await.unwrap();
-        b.pump_one().await.unwrap();
-        a.pump_one().await.unwrap();
-        assert_eq!(
-            b.audio().audio_state(MAC).await.unwrap(),
-            AudioState::Connected
-        );
-        assert_eq!(
-            a.audio().audio_state(MAC).await.unwrap(),
-            AudioState::Disconnected
-        );
-    }
-
-    #[tokio::test]
-    async fn holding_is_announced_to_peer() {
-        let (net_a, net_b) = LoopbackNet::pair();
-        let a = GroupHub::new("lan", "host-a", net_a, MockAudio::new(), None);
-        let b = GroupHub::new("lan", "host-b", net_b, MockAudio::new(), None);
-        a.set_holding(Some(MAC.into())).await;
-        b.pump_one().await.unwrap();
-        let peers = b.peers().await;
-        assert_eq!(peers.len(), 1);
-        assert_eq!(peers[0].id, "host-a");
-        assert_eq!(peers[0].holding.as_deref(), Some(MAC));
-    }
-}
+mod tests;

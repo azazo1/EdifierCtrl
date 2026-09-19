@@ -15,17 +15,20 @@ tracing = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
+    "implement",
     "Devices_Bluetooth",
     "Devices_Bluetooth_GenericAttributeProfile",
     "Devices_Bluetooth_Rfcomm",
     "Devices_Enumeration",
     "Foundation",
     "Foundation_Collections",
-    "Media_Audio",
     "Networking_Sockets",
     "Storage_Streams",
-    "System",
     "Win32_Devices_Bluetooth",
+    "Win32_Devices_FunctionDiscovery",
     "Win32_Foundation",
+    "Win32_Media_Audio",
     "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_UI_Shell_PropertiesSystem",
 ] }

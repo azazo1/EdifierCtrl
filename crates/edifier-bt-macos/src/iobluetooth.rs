@@ -2,6 +2,10 @@
 
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_void};
+use std::sync::Mutex;
+
+// Swift 桥只有一条 RFCOMM. 串行化阻塞调用, 避免已取消 recv 跨越重连边界.
+static BRIDGE: Mutex<()> = Mutex::new(());
 
 use async_trait::async_trait;
 use edifier_protocol::RFCOMM_SERVICE_UUID;
@@ -84,6 +88,7 @@ impl HeadsetTransport for MacosHeadset {
             ));
         }
         let json = tokio::task::spawn_blocking(|| unsafe {
+            let _bridge = BRIDGE.lock().unwrap_or_else(|e| e.into_inner());
             let fn_ = load::<ScanFn>(c"edifier_macos_scan").ok_or_else(|| missing("edifier_macos_scan"))?;
             take_json(fn_())
         })
@@ -112,6 +117,7 @@ impl HeadsetTransport for MacosHeadset {
         let address = address.to_string();
         let for_log = address.clone();
         tokio::task::spawn_blocking(move || unsafe {
+            let _bridge = BRIDGE.lock().unwrap_or_else(|e| e.into_inner());
             let fn_ = load::<OpenFn>(c"edifier_macos_open").ok_or_else(|| missing("edifier_macos_open"))?;
             let c = CString::new(address).map_err(|e| TransportError::Connect(e.to_string()))?;
             if fn_(c.as_ptr()) == 0 {
@@ -129,6 +135,7 @@ impl HeadsetTransport for MacosHeadset {
     async fn write(&self, bytes: &[u8]) -> Result<(), TransportError> {
         let payload = bytes.to_vec();
         tokio::task::spawn_blocking(move || unsafe {
+            let _bridge = BRIDGE.lock().unwrap_or_else(|e| e.into_inner());
             let fn_ = load::<WriteFn>(c"edifier_macos_write").ok_or_else(|| missing("edifier_macos_write"))?;
             if fn_(payload.as_ptr(), payload.len() as c_int) == 0 {
                 Ok(())
@@ -142,11 +149,14 @@ impl HeadsetTransport for MacosHeadset {
 
     async fn recv(&self) -> Result<Vec<u8>, TransportError> {
         tokio::task::spawn_blocking(|| unsafe {
+            let _bridge = BRIDGE.lock().unwrap_or_else(|e| e.into_inner());
             let fn_ = load::<ReadFn>(c"edifier_macos_read").ok_or_else(|| missing("edifier_macos_read"))?;
             let mut buf = vec![0u8; 512];
             let n = fn_(buf.as_mut_ptr(), buf.len() as c_int);
             if n < 0 {
                 Err(TransportError::Closed)
+            } else if n as usize > buf.len() {
+                Err(TransportError::Unavailable("macOS 桥返回无效读取长度".into()))
             } else {
                 buf.truncate(n as usize);
                 Ok(buf)
@@ -158,9 +168,13 @@ impl HeadsetTransport for MacosHeadset {
 
     async fn close(&self) -> Result<(), TransportError> {
         tokio::task::spawn_blocking(|| unsafe {
+            let _bridge = BRIDGE.lock().unwrap_or_else(|e| e.into_inner());
             let fn_ = load::<UnitFn>(c"edifier_macos_close").ok_or_else(|| missing("edifier_macos_close"))?;
-            let _ = fn_();
-            Ok(())
+            if fn_() == 0 {
+                Ok(())
+            } else {
+                Err(TransportError::Unavailable(last_error()))
+            }
         })
         .await
         .map_err(|e| TransportError::Unavailable(e.to_string()))??;
@@ -188,6 +202,7 @@ impl AudioControl for MacosAudio {
     async fn audio_state(&self, address: &str) -> Result<AudioState, TransportError> {
         let address = address.to_string();
         let text = tokio::task::spawn_blocking(move || unsafe {
+            let _bridge = BRIDGE.lock().unwrap_or_else(|e| e.into_inner());
             let fn_ = load::<AddrStateFn>(c"edifier_macos_audio_state")
                 .ok_or_else(|| missing("edifier_macos_audio_state"))?;
             let c = CString::new(address).map_err(|e| TransportError::Unavailable(e.to_string()))?;
@@ -195,10 +210,11 @@ impl AudioControl for MacosAudio {
         })
         .await
         .map_err(|e| TransportError::Unavailable(e.to_string()))??;
-        Ok(if text == "connected" {
-            AudioState::Connected
-        } else {
-            AudioState::Disconnected
+        Ok(match text.as_str() {
+            "connected" => AudioState::Connected,
+            "disconnected" => AudioState::Disconnected,
+            "connecting" => AudioState::Connecting,
+            _ => AudioState::Unknown,
         })
     }
 
@@ -206,6 +222,10 @@ impl AudioControl for MacosAudio {
         audio_int(c"edifier_macos_audio_connect", address).await?;
         info!(target: "edifier_bt_macos", address, "已请求系统连接音频");
         Ok(())
+    }
+
+    async fn select_output(&self, address: &str) -> Result<(), TransportError> {
+        audio_int(c"edifier_macos_audio_select_output", address).await
     }
 
     async fn disconnect_audio(&self, address: &str) -> Result<(), TransportError> {
@@ -220,7 +240,9 @@ impl AudioControl for MacosAudio {
         suppress: bool,
     ) -> Result<(), TransportError> {
         if suppress {
-            let _ = self.disconnect_audio(address).await;
+            return Err(TransportError::Unsupported(format!(
+                "macOS 没有公开的自动重连抑制 API: {address}"
+            )));
         }
         Ok(())
     }

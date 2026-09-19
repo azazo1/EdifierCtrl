@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key><string>zh_CN</string>
+    <key>CFBundleExecutable</key><string>EdifierCtrl</string>
+    <key>CFBundleIdentifier</key><string>com.edifierctrl.mac</string>
+    <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+    <key>CFBundleName</key><string>EdifierCtrl</string>
+    <key>CFBundleDisplayName</key><string>EdifierCtrl</string>
+    <key>CFBundleIconFile</key><string>AppIcon.icns</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>0.0.0</string>
+    <key>CFBundleVersion</key><string>0</string>
+    <key>LSMinimumSystemVersion</key><string>13.0</string>
+    <key>NSHighResolutionCapable</key><true/>
+    <key>NSPrincipalClass</key><string>NSApplication</string>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>EdifierCtrl 需要访问蓝牙以发现并连接你的漫步者耳机, 读取状态并发送控制指令.</string>
+    <key>NSBluetoothPeripheralUsageDescription</key>
+    <string>EdifierCtrl 需要通过蓝牙与已配对耳机交换控制数据.</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>EdifierCtrl 使用局域网发现同组设备, 协调耳机连接与音频接管.</string>
+    <key>EdifierBuildVersion</key><string>dev-build</string>
+    <key>EdifierFakeBuild</key><false/>
+    <key>EdifierReleaseRepository</key><string></string>
+</dict>
+</plist>
