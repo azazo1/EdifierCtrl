@@ -17,6 +17,7 @@ public static class AppActions
     private static bool _started;
     private static int _stopping;
     private static DateTimeOffset? _handoffStarted;
+    private static bool _handoffDelayReported;
     private static string? _claimTarget;
 
     public static async Task StartAsync(DispatcherQueue dispatcher)
@@ -338,18 +339,16 @@ public static class AppActions
         if (SessionState.HandoffActive)
         {
             _handoffStarted ??= DateTimeOffset.UtcNow;
-            if (DateTimeOffset.UtcNow - _handoffStarted.Value > TimeSpan.FromSeconds(35))
+            if (!_handoffDelayReported && DateTimeOffset.UtcNow - _handoffStarted.Value > TimeSpan.FromSeconds(60))
             {
-                const string reason = "未能在预期时间内确认音频连接. 请检查两端蓝牙状态后重试.";
-                SessionState.SetHandoff("failed", reason);
-                SessionState.Notify("交接超时", reason, true);
-                _claimTarget = null;
-                _handoffStarted = null;
+                _handoffDelayReported = true;
+                SessionState.Notify("交接仍在处理中", "系统蓝牙操作或恢复尚未完成, 请等待结果. 当前操作结束前不能再次接管.");
             }
         }
         else
         {
             _handoffStarted = null;
+            _handoffDelayReported = false;
             if (!SessionState.HandoffDone) _claimTarget = null;
         }
         if (SessionState.HandoffDone && _claimTarget is { } target && SessionState.SameMac(SessionState.Holding, target) && !SessionState.Busy)

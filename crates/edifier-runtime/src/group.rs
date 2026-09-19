@@ -7,7 +7,7 @@ use edifier_group::{
     HandoffProgress, MacAddr, PeerInfo, Phase,
 };
 use tokio::sync::{broadcast, watch, Mutex};
-use tokio::time::{interval, Duration, Instant};
+use tokio::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
 use crate::cd::CdFallback;
@@ -16,6 +16,7 @@ use crate::net::{Datagram, GroupNet};
 use crate::transport::{AudioControl, AudioState, TransportError};
 
 mod actions;
+mod runner;
 use actions::OperationState;
 
 const PEER_TTL: Duration = Duration::from_secs(6);
@@ -256,11 +257,15 @@ impl<N: GroupNet, A: AudioControl> GroupHub<N, A> {
 
     pub async fn tick_at(&self, now: u64) {
         let mut operation = self.operation.lock().await;
+        self.tick_locked(&mut operation, now).await;
+    }
+
+    async fn tick_locked(&self, operation: &mut OperationState, now: u64) {
         if *self.closed.borrow() {
             return;
         }
         let actions = self.machine.lock().await.tick(now);
-        if let Err(err) = self.apply(&mut operation, actions).await {
+        if let Err(err) = self.apply(operation, actions).await {
             warn!(target: "edifier_runtime", %err, "交接定时动作失败");
         }
     }
@@ -312,82 +317,6 @@ impl<N: GroupNet, A: AudioControl> GroupHub<N, A> {
         error.map_or(Ok(()), Err)
     }
 
-    pub async fn pump_one(&self) -> Result<(), TransportError> {
-        self.ensure_open()?;
-        let bytes = self.net.recv().await?;
-        self.dispatch(&bytes).await;
-        Ok(())
-    }
-
-    pub async fn run(&self) -> Result<(), TransportError> {
-        let mut closed = self.closed.subscribe();
-        if *closed.borrow() {
-            return Ok(());
-        }
-        self.announce().await;
-        let mut tick = interval(Duration::from_millis(200));
-        let mut hello = interval(Duration::from_secs(2));
-        loop {
-            tokio::select! {
-                _ = closed.changed() => return Ok(()),
-                bytes = self.net.recv() => self.dispatch(&bytes?).await,
-                _ = tick.tick() => self.tick_at(now_ms()).await,
-                _ = hello.tick() => self.announce().await,
-            }
-        }
-    }
-
-    async fn dispatch(&self, bytes: &[u8]) {
-        let dg: Datagram = match serde_json::from_slice(bytes) {
-            Ok(v) => v,
-            Err(err) => {
-                warn!(target: "edifier_runtime", %err, "组报文不是 JSON");
-                return;
-            }
-        };
-        if dg.from == self.peer.lock().await.id {
-            return;
-        }
-        let now = now_ms();
-        let msg = match open(&self.key, self.gid, now, &dg.envelope) {
-            Ok(m) => m,
-            Err(err) => {
-                debug!(target: "edifier_runtime", ?err, "丢弃组报文");
-                return;
-            }
-        };
-        let mut operation = self.operation.lock().await;
-        if *self.closed.borrow() {
-            return;
-        }
-        if let GroupMessage::Announce { peer } = &msg {
-            let mut peer = peer.clone();
-            peer.holding = peer.holding.as_deref()
-                .and_then(|s| MacAddr::parse(s).ok()).map(MacAddr::to_colon_string);
-            self.peers.lock().await.insert(peer.id.clone(), (peer.clone(), Instant::now()));
-            let _ = self.events.send(RuntimeEvent::Peer(peer));
-        }
-        if let GroupMessage::HandoffRequest { headphone, nonce, deadline_ms } = &msg {
-            let Ok(mac) = MacAddr::parse(headphone) else { return };
-            if *deadline_ms <= now || edifier_group::message::parse_nonce(nonce).is_none() {
-                return;
-            }
-            if self.peer.lock().await.holding.as_deref() != Some(&mac.to_colon_string()) {
-                if let Err(err) = self.broadcast(GroupMessage::HandoffNoAudio {
-                    nonce: nonce.clone(),
-                }).await {
-                    warn!(target: "edifier_runtime", %err, "发送无音频回复失败");
-                }
-                return;
-            }
-            self.machine.lock().await.has_audio = true;
-        }
-        let actions = self.machine.lock().await.on_message(&msg, now);
-        if let Err(err) = self.apply(&mut operation, actions).await {
-            warn!(target: "edifier_runtime", %err, "执行交接报文失败");
-        }
-    }
-
     fn ensure_open(&self) -> Result<(), TransportError> {
         if *self.closed.borrow() { Err(TransportError::Closed) } else { Ok(()) }
     }
@@ -405,6 +334,13 @@ impl<N: GroupNet, A: AudioControl> GroupHub<N, A> {
     }
 
     async fn announce_inner(&self, operation: &OperationState) {
+        let peer = self.refresh_holding(operation).await;
+        if let Err(err) = self.broadcast(GroupMessage::Announce { peer }).await {
+            warn!(target: "edifier_runtime", %err, "广播组状态失败");
+        }
+    }
+
+    async fn refresh_holding(&self, operation: &OperationState) -> PeerInfo {
         let mut peer = self.peer.lock().await.clone();
         if self.machine.lock().await.phase() == Phase::Idle {
             // 候选只用于被动观察, 不能为了心跳重连或解除交接留下的重连抑制.
@@ -426,9 +362,7 @@ impl<N: GroupNet, A: AudioControl> GroupHub<N, A> {
         } else {
             peer.holding = self.verified_holding().await;
         }
-        if let Err(err) = self.broadcast(GroupMessage::Announce { peer }).await {
-            warn!(target: "edifier_runtime", %err, "广播组状态失败");
-        }
+        peer
     }
 
     async fn broadcast(&self, msg: GroupMessage) -> Result<(), TransportError> {
@@ -453,3 +387,7 @@ fn hostname() -> String {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod runner_tests;
+#[cfg(test)]
+mod timing_tests;

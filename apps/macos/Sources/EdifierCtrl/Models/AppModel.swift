@@ -29,6 +29,7 @@ final class AppModel: ObservableObject {
     private var startupTask: Task<Void, Never>?
     private var operationTask: Task<Void, Never>?
     private var handoffStarted: Date?
+    private var handoffDelayReported = false
     private var claimTarget: String?
     private var shuttingDown = false
     private var hasStarted = false
@@ -326,11 +327,12 @@ final class AppModel: ObservableObject {
             claimTarget = nil
             if !isConnected || state.address != target { connect(address: target) }
         }
-        if let started = handoffStarted, Date().timeIntervalSince(started) > 35 {
-            state.handoff = HandoffProgress(kind: "failed", reason: "未能在预期时间内确认音频连接. 请检查两端蓝牙状态后重试.")
-            handoffStarted = nil
-            claimTarget = nil
-            notify("交接超时", state.handoff?.reason ?? "", error: true)
+        if state.handoff?.isActive != true {
+            handoffDelayReported = false
+        }
+        if !handoffDelayReported, let started = handoffStarted, Date().timeIntervalSince(started) > 60 {
+            handoffDelayReported = true
+            notify("交接仍在处理中", "系统蓝牙操作或恢复尚未完成, 请等待结果. 当前操作结束前不能再次接管.")
         }
     }
 

@@ -4,7 +4,8 @@ use tracing::info;
 use crate::mac::MacAddr;
 use crate::message::{nonce_to_hex, GroupMessage, Nonce};
 
-pub const HANDOFF_DEADLINE_MS: u64 = 6000;
+// 包含原设备移除音频服务, 目标建立连接及 Taken 确认, Windows 多个服务可能依次耗时数秒.
+pub const HANDOFF_DEADLINE_MS: u64 = 30_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {

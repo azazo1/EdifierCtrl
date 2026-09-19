@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use thiserror::Error;
@@ -55,6 +56,8 @@ pub trait HeadsetTransport: Send + Sync {
 
 #[async_trait]
 pub trait AudioControl: Send + Sync {
+    /// 平台操作的等待预算, 超时不代表原生驱动操作已停止.
+    fn operation_timeout(&self) -> Duration { Duration::from_secs(3) }
     async fn audio_state(&self, address: &str) -> Result<AudioState, TransportError>;
     async fn connect_audio(&self, address: &str) -> Result<(), TransportError>;
     /// 在用户明确接管时选择输出路由, 默认由平台维持现有策略.
@@ -71,6 +74,7 @@ pub trait AudioControl: Send + Sync {
 
 #[async_trait]
 impl<T: AudioControl + ?Sized> AudioControl for Arc<T> {
+    fn operation_timeout(&self) -> Duration { (**self).operation_timeout() }
     async fn audio_state(&self, address: &str) -> Result<AudioState, TransportError> {
         (**self).audio_state(address).await
     }

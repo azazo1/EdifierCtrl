@@ -117,14 +117,35 @@ impl<N: GroupNet, A: AudioControl> GroupHub<N, A> {
         mac: MacAddr,
         suppress: bool,
     ) -> Result<(), TransportError> {
-        if suppress {
+        let addr = mac.to_colon_string();
+        let result = if suppress {
+            let mut budget = self.audio.operation_timeout();
+            if let Phase::Releasing { headphone, deadline_ms, .. } = self.machine.lock().await.phase() {
+                if headphone == mac {
+                    let remaining = deadline_ms.saturating_sub(now_ms()).saturating_sub(250);
+                    budget = budget.min(Duration::from_millis(remaining));
+                }
+            }
+            if budget.is_zero() {
+                return Err(TransportError::Unavailable("设置重连抑制前请求期限已耗尽".into()));
+            }
             // 平台调用可能先产生副作用再被取消或返回错误, 必须提前登记.
             operation.suppressed.insert(mac);
-        } else if !operation.suppressed.contains(&mac) {
-            return Ok(());
-        }
-        let result = timeout(AUDIO_TIMEOUT, self.audio.suppress_autoreconnect(&mac.to_colon_string(), suppress))
-            .await.map_err(|_| TransportError::Unavailable("设置重连抑制超时".into()))?;
+            timeout(budget, self.audio.suppress_autoreconnect(&addr, true))
+                .await.map_err(|_| TransportError::Unavailable("设置重连抑制超时".into()))?
+        } else {
+            if !operation.suppressed.contains(&mac) {
+                return Ok(());
+            }
+            // 取消等待不会停止 spawn_blocking 驱动调用. 恢复必须在平台串行锁后实际完成,
+            // 本方法持有 operation 锁期间不允许下一项交接副作用进入.
+            let started = Instant::now();
+            info!(target: "edifier_runtime", address = %addr, "等待平台完成音频服务恢复");
+            let result = self.audio.suppress_autoreconnect(&addr, false).await;
+            info!(target: "edifier_runtime", address = %addr, elapsed_ms = started.elapsed().as_millis(),
+                restored = result.is_ok(), "音频服务恢复调用结束");
+            result
+        };
         match result {
             Err(TransportError::Unsupported(reason)) if suppress => {
                 warn!(target: "edifier_runtime", %reason, "平台不支持抑制重连, 继续验证实际释放状态");
@@ -178,7 +199,7 @@ impl<N: GroupNet, A: AudioControl> GroupHub<N, A> {
     ) -> Result<bool, TransportError> {
         self.suppress(operation, mac, false).await?;
         let addr = mac.to_colon_string();
-        timeout(AUDIO_TIMEOUT, async {
+        timeout(self.audio.operation_timeout(), async {
             let before = self.audio.audio_state(&addr).await;
             if !matches!(before, Ok(AudioState::Connected)) {
                 self.audio.connect_audio(&addr).await?;
@@ -210,8 +231,19 @@ impl<N: GroupNet, A: AudioControl> GroupHub<N, A> {
         }
         let deadline = Instant::now() + Duration::from_millis(remaining);
         let mut context = Vec::new();
-        info!(target: "edifier_runtime", address = %addr, remaining_ms = remaining, "请求系统释放音频");
-        match timeout_at(deadline.min(Instant::now() + AUDIO_TIMEOUT), self.audio.disconnect_audio(&addr)).await {
+        if operation.suppressed.contains(&mac) {
+            // Windows 的抑制操作已经顺序关闭音频服务, 先核验避免再次发起相同驱动操作.
+            if matches!(timeout_at(deadline.min(Instant::now() + AUDIO_TIMEOUT), self.audio.audio_state(&addr)).await,
+                Ok(Ok(AudioState::Disconnected))) {
+                info!(target: "edifier_runtime", address = %addr, "抑制重连后已确认音频释放");
+                return Ok(());
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err(TransportError::Connect("音频释放仍待确认 (阶段: 抑制后的状态确认, 请求期限已耗尽)".into()));
+        }
+        info!(target: "edifier_runtime", address = %addr, remaining_ms = deadline.saturating_duration_since(Instant::now()).as_millis(), "请求系统释放音频");
+        match timeout_at(deadline.min(Instant::now() + self.audio.operation_timeout()), self.audio.disconnect_audio(&addr)).await {
             Ok(Ok(())) => {}
             Ok(Err(err)) => {
                 warn!(target: "edifier_runtime", %err, "系统断开音频失败, 继续核验实际释放");

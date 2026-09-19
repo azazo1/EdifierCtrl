@@ -482,7 +482,7 @@ async fn release_never_sends_cd_to_another_control_device() {
 async fn unknown_disconnect_aborts_and_restores_without_released() {
     let hub = hub(TestAudio { after_disconnect: AudioState::Unknown, ..TestAudio::default() }, None);
     seed_holder(&hub).await;
-    dispatch(&hub, "requester", request("aa-bb-cc-dd-ee-ff")).await;
+    dispatch(&hub, "requester", request_with_budget("aa-bb-cc-dd-ee-ff", 1200)).await;
     assert_eq!(hub.machine.lock().await.phase(), Phase::Idle);
     assert_eq!(hub.holding().await, None);
     assert_eq!(hub.peer.lock().await.holding.as_deref(), Some(MAC));

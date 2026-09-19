@@ -13,18 +13,24 @@ mod state;
 /// 通过公开的服务开关请求连接, 通过系统音频端点确认实际状态.
 pub struct WindowsAudio {
     services: Arc<Mutex<services::ServiceState>>,
+    operation_gate: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl WindowsAudio {
     pub fn new() -> Self {
-        Self { services: Arc::new(Mutex::new(services::ServiceState::default())) }
+        Self {
+            services: Arc::new(Mutex::new(services::ServiceState::default())),
+            operation_gate: Arc::new(tokio::sync::Mutex::new(())),
+        }
     }
 
     async fn update_services(&self, address: &str, release: bool, connect: bool) -> Result<(), TransportError> {
         let address = com::format_addr(com::parse_addr(address)?);
         let services = self.services.clone();
+        // 进入阻塞线程前按序排队. guard 随闭包存活, 取消等待也不会让恢复越过尚未结束的写操作.
+        let operation_guard = self.operation_gate.clone().lock_owned().await;
         com::blocking(move || {
-            // 锁在后台闭包内持有, 调用方超时取消后也不会与后续恢复交错.
+            let _operation_guard = operation_guard;
             let mut services = services.lock()
                 .map_err(|err| TransportError::Unavailable(format!("音频服务状态锁: {err}")))?;
             if release {
@@ -55,10 +61,20 @@ impl Default for WindowsAudio {
 
 #[async_trait]
 impl AudioControl for WindowsAudio {
+    fn operation_timeout(&self) -> std::time::Duration {
+        // A2DP 与免提服务顺序移除/恢复可能超过默认 3 秒, 不并发操作驱动.
+        std::time::Duration::from_secs(15)
+    }
+
     async fn audio_state(&self, address: &str) -> Result<AudioState, TransportError> {
         let address = com::format_addr(com::parse_addr(address)?);
         let services = self.services.clone();
+        let Ok(operation_guard) = self.operation_gate.clone().try_lock_owned() else {
+            // 服务修改或另一状态查询尚未完成, 不为每次轮询堆积阻塞线程.
+            return Ok(AudioState::Unknown);
+        };
         com::blocking(move || {
+            let _operation_guard = operation_guard;
             let mut services = services.lock()
                 .map_err(|err| TransportError::Unavailable(format!("音频服务状态锁: {err}")))?;
             let observed = state::audio_state(&address)?;
