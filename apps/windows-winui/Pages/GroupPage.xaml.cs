@@ -77,6 +77,7 @@ public sealed partial class GroupPage : Page
         GroupTitle.Text = joined ? "设备已在同一交接组" : "把你的设备连在一起";
         JoinForm.Visibility = PageUi.Visible(!joined);
         JoinedPanel.Visibility = PageUi.Visible(joined);
+        JoinedGroupName.Text = joined ? "组名: " + SessionState.JoinedGroupName : "";
         MembersSection.Visibility = PageUi.Visible(joined);
         LeaveButton.IsEnabled = CanAct;
         LocalTitle.Text = Environment.MachineName + " / 本机";

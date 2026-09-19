@@ -28,7 +28,11 @@
                     </StackPanel>
                     <Grid x:Name="JoinedPanel" Visibility="Collapsed" ColumnSpacing="18">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                        <StackPanel Spacing="8"><TextBlock Text="已加入交接组" FontWeight="SemiBold"/><TextBlock Text="关闭窗口后仍可响应其他设备的交接请求." Style="{StaticResource MutedText}"/></StackPanel>
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="已加入交接组" FontWeight="SemiBold"/>
+                            <TextBlock x:Name="JoinedGroupName" FontWeight="SemiBold" TextWrapping="Wrap" IsTextSelectionEnabled="True"/>
+                            <TextBlock Text="关闭窗口后仍可响应其他设备的交接请求." Style="{StaticResource MutedText}"/>
+                        </StackPanel>
                         <Button x:Name="LeaveButton" Grid.Column="1" Content="退出交接组" Click="OnLeave" Style="{StaticResource ActionButtonStyle}" VerticalAlignment="Center"/>
                     </Grid>
                     <InfoBar x:Name="PreferenceError" Severity="Error" IsClosable="False" Title="无法保存偏好" IsOpen="False"/>

@@ -63,6 +63,9 @@ struct HandoffView: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 6) {
                             StatusPill(text: "已加入交接组")
+                            Text("组名: \(model.joinedGroupName)")
+                                .font(.callout.weight(.semibold)).textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
                             Text("关闭窗口后仍可响应其他设备的交接请求.").font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()

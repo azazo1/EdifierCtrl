@@ -187,7 +187,7 @@ public static class AppActions
         await EdifierNative.JoinAsync(group).ConfigureAwait(false);
         await OnUiAsync(() =>
         {
-            SessionState.SetGroupJoined(true);
+            SessionState.SetGroupJoined(true, group);
             SessionState.Notify("已加入交接组", "同一网络中使用相同组名的设备会自动出现在这里.");
             var prefs = AppPreferences.Current;
             prefs.RememberGroup = remember;

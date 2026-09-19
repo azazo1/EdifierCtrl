@@ -16,6 +16,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var operation: String?
     @Published private(set) var scanning = false
     @Published private(set) var groupJoined = false
+    @Published private(set) var joinedGroupName = ""
     @Published private(set) var coreVersion = ""
     @Published var notice: UserNotice?
     @Published var groupSecret = ""
@@ -194,6 +195,7 @@ final class AppModel: ObservableObject {
         }
         run("正在加入交接组") {
             try await self.native.join(secret)
+            self.joinedGroupName = secret
             self.groupJoined = true
             self.notify("已加入交接组", "同一网络中使用相同组名的设备会自动出现在这里.")
             do {
@@ -210,6 +212,7 @@ final class AppModel: ObservableObject {
         run("正在退出交接组", allowDuringHandoff: true) {
             try await self.native.leave()
             self.groupJoined = false
+            self.joinedGroupName = ""
             self.peers = []
             self.state.handoff = nil
             self.state.holding = nil

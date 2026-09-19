@@ -27,6 +27,7 @@ public static class SessionState
     public static int? Battery { get; private set; }
     public static string Hint { get; private set; } = "扫描已配对的耳机, 点列表连接.";
     public static bool GroupJoined { get; private set; }
+    public static string JoinedGroupName { get; private set; } = "";
     public static string? Holding { get; private set; }
     public static IReadOnlyList<GroupPeer> Peers { get; private set; } = [];
     public static IReadOnlyList<HeadphoneDevice> Devices { get; private set; } = [];
@@ -128,8 +129,9 @@ public static class SessionState
         Raise();
     }
 
-    internal static void SetGroupJoined(bool joined)
+    internal static void SetGroupJoined(bool joined, string groupName = "")
     {
+        JoinedGroupName = joined ? groupName : "";
         GroupJoined = joined;
         if (!joined)
         {
